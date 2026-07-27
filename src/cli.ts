@@ -10,7 +10,7 @@ import { assignKeys } from './core/keys.js';
 import { applyExtraction, planExtraction } from './core/extract.js';
 import {
   adoptCatalogEdits, adoptSourceEdits, deadKeys, loadMemory, pendingWork, pruneMemory, saveMemory,
-  sourceCatalog, stats, syncMemory,
+  localeCatalog, setFallback, sourceCatalog, stats, syncMemory,
 } from './core/memory.js';
 import { writeBrief } from './core/brief.js';
 import { checkTranslations, partition } from './core/guardrails.js';
@@ -22,7 +22,7 @@ import { applyDecisions } from './core/apply.js';
 import { detectMarketingLoop, frozenTexts, marketingLoopPitch } from './core/marketing.js';
 import { AGENTS, detectAgents, installAgents, uninstallAgents } from './core/install.js';
 import { wireRuntime } from './core/wire.js';
-import { revertLast } from './core/backup.js';
+import { Backup, revertLast } from './core/backup.js';
 import {
   COMMON_LOCALES, REGIONS, canonicalLocaleCode, localeInfo, localesForRegions,
   type LocaleRegion,
@@ -33,7 +33,7 @@ import { c, commandForStage, heading, nextStep, reportScan, reportStats } from '
 import { renderCompletenessReport } from './core/report.js';
 import { analyzeCompleteness } from './core/completeness.js';
 import { exists, readJson, truncate, writeJson } from './core/util.js';
-import { readCatalog, missingKeys, orphanKeys } from './core/catalog.js';
+import { readCatalog, missingKeys, orphanKeys, writeCatalog } from './core/catalog.js';
 import { estimateBatch, translateWithLlm } from './core/llm.js';
 import type { Config, TranslationUnit } from './types.js';
 
@@ -381,6 +381,8 @@ function cmdScan(): void {
 function cmdExtract(): void {
   const config = requireConfig(cwd);
   const memory = loadMemory(cwd, config.sourceLocale);
+  adoptCatalogEdits(cwd, memory, config);
+  adoptSourceEdits(cwd, memory, config);
   const scan = scanRepo(cwd, config);
 
   const marketing = detectMarketingLoop(cwd);
@@ -388,16 +390,27 @@ function cmdExtract(): void {
   const strings = scan.strings.filter((s) => !frozen.has(s.text));
   const frozenCount = scan.strings.length - strings.length;
 
-  const keyed = assignKeys(strings, config, memory);
+  const reservedKeys = new Set<string>();
+  for (const locale of config.locales) {
+    for (const key of Object.keys(readCatalog(cwd, config, locale))) reservedKeys.add(key);
+  }
+  const keyed = assignKeys(strings, config, memory, reservedKeys);
   const plan = planExtraction(cwd, keyed, config);
   const dryRun = flags.has('--dry-run');
+  const transaction = dryRun ? undefined : new Backup(cwd, 'extract');
 
   heading(`${plan.edits.length} string(s) will move into the catalogue`);
   if (frozenCount) {
     console.log(c.yellow(`  ${frozenCount} left alone — marketing-loop has an open rewrite for them.`));
   }
 
-  const result = applyExtraction(cwd, plan, config, dryRun);
+  let result: ReturnType<typeof applyExtraction>;
+  try {
+    result = applyExtraction(cwd, plan, config, dryRun, transaction);
+  } catch (error) {
+    transaction?.rollback();
+    throw error;
+  }
 
   const byFile = new Map<string, number>();
   for (const edit of result.applied) byFile.set(edit.file, (byFile.get(edit.file) ?? 0) + 1);
@@ -427,19 +440,50 @@ function cmdExtract(): void {
     return;
   }
 
-  // Only remember what actually landed in the code.
-  const applied = new Set(result.applied.map((e) => e.key));
-  const landed = keyed.filter((k) => applied.has(k.key));
-  const sync = syncMemory(memory, landed, config);
+  let sync: ReturnType<typeof syncMemory>;
+  let dead: string[];
+  let pruned: string[];
+  try {
+    // Only remember what actually landed in the code.
+    const applied = new Set(result.applied.map((e) => e.key));
+    const landed = keyed.filter((k) => applied.has(k.key));
+    sync = syncMemory(memory, landed, config);
 
-  // What is genuinely gone, as opposed to merely already extracted. Checked
-  // against the keys the code actually calls, not against this scan — a key
-  // extracted last run is absent from the scan because the loop worked.
-  const dead = deadKeys(memory, config, scanKeyUsage(cwd, config), new Set(keyed.map((k) => k.key)));
-  const pruned = flags.has('--prune') ? pruneMemory(memory, dead) : [];
+    // What is genuinely gone, as opposed to merely already extracted. Checked
+    // against the keys the code actually calls, not against this scan — a key
+    // extracted last run is absent from the scan because the loop worked.
+    dead = deadKeys(memory, config, scanKeyUsage(cwd, config), new Set(keyed.map((k) => k.key)));
+    pruned = flags.has('--prune') ? pruneMemory(memory, dead) : [];
 
-  saveMemory(cwd, memory);
-  writeJson(statePath(cwd, 'open-items.json'), plan.openItems);
+    transaction!.capture(path.relative(cwd, statePath(cwd, 'memory.json')));
+    transaction!.capture(path.relative(cwd, statePath(cwd, 'open-items.json')));
+    writeJson(statePath(cwd, 'open-items.json'), plan.openItems);
+
+    const source = sourceCatalog(memory);
+    for (const locale of config.locales) {
+      const existing = readCatalog(cwd, config, locale);
+      if (locale === config.sourceLocale) {
+        const renderable = flags.has('--prune') ? source : { ...existing, ...source };
+        writeCatalog(cwd, config, locale, renderable, (rel) => transaction!.capture(rel));
+        continue;
+      }
+      const translated = localeCatalog(memory, locale, false);
+      const current = Object.fromEntries(
+        Object.entries(source).map(([key, value]) => {
+          const approved = translated[key];
+          setFallback(memory, key, locale, approved === undefined);
+          return [key, approved ?? value];
+        })
+      );
+      const renderable = flags.has('--prune') ? current : { ...existing, ...current };
+      writeCatalog(cwd, config, locale, renderable, (rel) => transaction!.capture(rel));
+    }
+    saveMemory(cwd, memory);
+    result.backupId = transaction!.commit();
+  } catch (error) {
+    transaction!.rollback();
+    throw error;
+  }
 
   heading('memory');
   console.log(`  ${c.green('+')} ${sync.added.length} new key(s)`);
@@ -460,14 +504,14 @@ async function cmdTranslate(): Promise<void> {
   const config = requireConfig(cwd);
   const memory = loadMemory(cwd, config.sourceLocale);
 
-  // Pick up edits made outside the loop before deciding what still needs
-  // doing. Changed English first — that is what makes translations stale —
-  // then hand-written translations, which are the highest authority here.
+  // Pick up target edits against the source version they were written for.
+  // Generated fallbacks equal that source and must not become "manual" merely
+  // because the source catalogue changed moments later.
+  const adopted = adoptCatalogEdits(cwd, memory, config);
   const rewritten = adoptSourceEdits(cwd, memory, config);
   if (rewritten.length) {
     console.log(c.yellow(`${rewritten.length} English string(s) changed in ${config.messagesDir}/${config.sourceLocale}.json — their translations are now stale.`));
   }
-  const adopted = adoptCatalogEdits(cwd, memory, config);
   if (adopted) console.log(c.dim(`Adopted ${adopted} hand-written translation(s) from the catalogues; those are now locked.`));
 
   const only = listOf('--locales');

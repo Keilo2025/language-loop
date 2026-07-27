@@ -170,6 +170,8 @@ export interface MemoryEntry {
   placeholders: string[];
   firstSeen: string;
   lastSeen: string;
+  /** Locales whose catalogue value was generated from the source as a safe runtime fallback. */
+  fallbackLocales?: string[];
   translations: Record<string, MemoryTranslation>;
 }
 

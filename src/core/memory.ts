@@ -169,12 +169,15 @@ export function adoptSourceEdits(cwd: string, memory: Memory, config: Config): s
 export function adoptCatalogEdits(cwd: string, memory: Memory, config: Config): number {
   let adopted = 0;
   for (const locale of config.locales) {
+    if (locale === config.sourceLocale) continue;
     const catalog: Flat = readCatalog(cwd, config, locale);
     for (const [key, value] of Object.entries(catalog)) {
       const entry = memory.entries[key];
       if (!entry || !value.trim()) continue;
       const known = entry.translations[locale];
-      if (known && known.value === value) continue;
+      const generatedFallback = entry.fallbackLocales?.includes(locale) ?? false;
+      if (generatedFallback && value === entry.source) continue;
+      if (!generatedFallback && known && known.value === value) continue;
       entry.translations[locale] = {
         value,
         sourceHash: entry.sourceHash,
@@ -182,6 +185,7 @@ export function adoptCatalogEdits(cwd: string, memory: Memory, config: Config): 
         updatedAt: new Date().toISOString(),
         by: 'human',
       };
+      setFallback(memory, key, locale, false);
       adopted++;
     }
   }
@@ -268,5 +272,16 @@ export function recordTranslation(
     updatedAt: new Date().toISOString(),
     by,
   };
+  setFallback(memory, key, locale, false);
   return true;
+}
+
+export function setFallback(memory: Memory, key: string, locale: string, generated: boolean): void {
+  const entry = memory.entries[key];
+  if (!entry) return;
+  const locales = new Set(entry.fallbackLocales ?? []);
+  if (generated) locales.add(locale);
+  else locales.delete(locale);
+  if (locales.size) entry.fallbackLocales = [...locales].sort();
+  else delete entry.fallbackLocales;
 }

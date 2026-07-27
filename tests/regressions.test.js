@@ -10,7 +10,7 @@ import { assignKeys } from '../dist/core/keys.js';
 import { planExtraction, applyExtraction } from '../dist/core/extract.js';
 import { defaultConfig, saveConfig } from '../dist/core/config.js';
 import { loadMemory, saveMemory, deadKeys, pruneMemory } from '../dist/core/memory.js';
-import { nest } from '../dist/core/catalog.js';
+import { nest, readCatalog } from '../dist/core/catalog.js';
 import { readJsonPrecious, writeJson } from '../dist/core/util.js';
 import { commandForStage } from '../dist/core/report.js';
 
@@ -333,4 +333,305 @@ test('a key that is both a translation and a group is reported, not dropped', ()
   assert.throws(() => nest({ 'a.b': 'x', 'a.b.c': 'y' }, 'nested'), /already a translation/);
   assert.throws(() => nest({ 'a.b.c': 'y', 'a.b': 'x' }, 'nested'), /already a group/);
   assert.deepEqual(nest({ 'a.b': 'x', 'a.b.c': 'y' }, 'flat'), { 'a.b': 'x', 'a.b.c': 'y' });
+});
+
+test('extraction writes renderable source fallbacks for every locale', () => {
+  const dir = project({
+    'app/page.tsx': [
+      'export default function Page() {',
+      '  return <h1>Keep the app running while translations are reviewed</h1>;',
+      '}',
+    ].join('\n'),
+  });
+  const cfg = config();
+  saveConfig(dir, cfg);
+
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'extract', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(readCatalog(dir, cfg, 'en'), {
+    'common.keepAppRunningWhileTranslations': 'Keep the app running while translations are reviewed',
+  });
+  assert.deepEqual(readCatalog(dir, cfg, 'de'), {
+    'common.keepAppRunningWhileTranslations': 'Keep the app running while translations are reviewed',
+  });
+});
+
+test('source fallbacks remain untranslated work instead of becoming manual translations', () => {
+  const dir = project({
+    'app/page.tsx': [
+      'export default function Page() {',
+      '  return <h1>Translate this after extraction</h1>;',
+      '}',
+    ].join('\n'),
+  });
+  saveConfig(dir, config());
+
+  const extracted = spawnSync(process.execPath, ['dist/cli.js', 'extract', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+  assert.equal(extracted.status, 0, extracted.stderr);
+
+  const translated = spawnSync(process.execPath, ['dist/cli.js', 'translate', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(translated.status, 0, translated.stderr);
+  assert.match(translated.stdout, /1 item\(s\) need translating/);
+  assert.doesNotMatch(translated.stdout, /nothing to translate/);
+});
+
+test('a catalogue write failure rolls back the whole extraction', () => {
+  const before = [
+    'export default function Page() {',
+    '  return <h1>Do not leave this component half migrated</h1>;',
+    '}',
+  ].join('\n');
+  const dir = project({
+    'app/page.tsx': before,
+    messages: 'this file deliberately blocks creation of messages/en.json',
+  });
+  saveConfig(dir, config());
+
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'extract', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 1);
+  assert.equal(fs.readFileSync(path.join(dir, 'app/page.tsx'), 'utf8'), before);
+  assert.equal(fs.existsSync(path.join(dir, '.language-loop/memory.json')), false);
+  assert.equal(fs.existsSync(path.join(dir, '.language-loop/open-items.json')), false);
+});
+
+test('extracting new copy preserves edits made in the source catalogue', () => {
+  const dir = project({
+    'app/page.tsx': [
+      'export default function Page() {',
+      '  return <h1>A newly added heading</h1>;',
+      '}',
+    ].join('\n'),
+  });
+  const cfg = config();
+  saveConfig(dir, cfg);
+  const memory = emptyMemory();
+  memory.entries['common.existing'] = {
+    source: 'Original heading',
+    sourceHash: 'old-hash',
+    namespace: 'common',
+    kind: 'heading',
+    file: 'app/old.tsx',
+    placeholders: [],
+    firstSeen: '',
+    lastSeen: '',
+    translations: {},
+  };
+  saveMemory(dir, memory);
+  fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'messages/en.json'), JSON.stringify({
+    common: { existing: 'Edited by the copywriter' },
+  }));
+
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'extract', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  const source = readCatalog(dir, cfg, 'en');
+  assert.equal(source['common.existing'], 'Edited by the copywriter');
+  assert.equal(source['common.newlyAddedHeading'], 'A newly added heading');
+});
+
+test('extraction falls back to current source copy instead of serving stale translations', () => {
+  const dir = project({});
+  const cfg = config();
+  saveConfig(dir, cfg);
+  const memory = emptyMemory();
+  memory.entries['common.promise'] = {
+    source: 'Ships in one day',
+    sourceHash: 'old-hash',
+    namespace: 'common',
+    kind: 'body',
+    file: 'app/page.tsx',
+    placeholders: [],
+    firstSeen: '',
+    lastSeen: '',
+    translations: {
+      de: {
+        value: 'Versand an einem Tag',
+        sourceHash: 'old-hash',
+        status: 'approved',
+        updatedAt: '',
+        by: 'agent',
+      },
+    },
+  };
+  saveMemory(dir, memory);
+  fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'messages/en.json'), JSON.stringify({
+    common: { promise: 'Ships in three days' },
+  }));
+  fs.writeFileSync(path.join(dir, 'messages/de.json'), JSON.stringify({
+    common: { promise: 'Versand an einem Tag' },
+  }));
+
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'extract', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(readCatalog(dir, cfg, 'de')['common.promise'], 'Ships in three days');
+
+  const translated = spawnSync(process.execPath, ['dist/cli.js', 'translate', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+  assert.equal(translated.status, 0, translated.stderr);
+  assert.match(translated.stdout, /1 item\(s\) need translating/);
+});
+
+test('editing source copy after extraction does not turn the old fallback into a manual translation', () => {
+  const dir = project({
+    'app/page.tsx': [
+      'export default function Page() {',
+      '  return <h1>Original source heading</h1>;',
+      '}',
+    ].join('\n'),
+  });
+  const cfg = config();
+  saveConfig(dir, cfg);
+
+  const extracted = spawnSync(process.execPath, ['dist/cli.js', 'extract', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+  assert.equal(extracted.status, 0, extracted.stderr);
+
+  const source = readCatalog(dir, cfg, 'en');
+  source['common.originalSourceHeading'] = 'Revised source heading';
+  fs.writeFileSync(path.join(dir, 'messages/en.json'), JSON.stringify({
+    common: { originalSourceHeading: source['common.originalSourceHeading'] },
+  }));
+
+  const translated = spawnSync(process.execPath, ['dist/cli.js', 'translate', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(translated.status, 0, translated.stderr);
+  assert.match(translated.stdout, /1 item\(s\) need translating/);
+  assert.doesNotMatch(translated.stdout, /nothing to translate/);
+});
+
+test('extraction preserves existing catalogue keys that are not in loop memory', () => {
+  const dir = project({
+    'app/page.tsx': [
+      "import { useTranslations } from 'next-intl';",
+      'export default function Page() {',
+      "  const t = useTranslations('common');",
+      "  return <><h1>{t('legacy')}</h1><p>New hardcoded copy</p></>;",
+      '}',
+    ].join('\n'),
+  });
+  const cfg = config();
+  saveConfig(dir, cfg);
+  fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'messages/en.json'), JSON.stringify({
+    common: { legacy: 'Existing source message' },
+  }));
+  fs.writeFileSync(path.join(dir, 'messages/de.json'), JSON.stringify({
+    common: { legacy: 'Bestehende Übersetzung' },
+  }));
+
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'extract', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(readCatalog(dir, cfg, 'en')['common.legacy'], 'Existing source message');
+  assert.equal(readCatalog(dir, cfg, 'de')['common.legacy'], 'Bestehende Übersetzung');
+});
+
+test('a human can deliberately change a translation back to the source wording', () => {
+  const dir = project({});
+  const cfg = config();
+  saveConfig(dir, cfg);
+  const memory = emptyMemory();
+  memory.entries['common.productName'] = {
+    source: 'Language Loop',
+    sourceHash: 'current-hash',
+    namespace: 'common',
+    kind: 'heading',
+    file: 'app/page.tsx',
+    placeholders: [],
+    firstSeen: '',
+    lastSeen: '',
+    translations: {
+      de: {
+        value: 'Sprachschleife',
+        sourceHash: 'current-hash',
+        status: 'approved',
+        updatedAt: '',
+        by: 'agent',
+      },
+    },
+  };
+  saveMemory(dir, memory);
+  fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'messages/en.json'), JSON.stringify({
+    common: { productName: 'Language Loop' },
+  }));
+  fs.writeFileSync(path.join(dir, 'messages/de.json'), JSON.stringify({
+    common: { productName: 'Language Loop' },
+  }));
+
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'extract', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(readCatalog(dir, cfg, 'de')['common.productName'], 'Language Loop');
+  const saved = loadMemory(dir, 'en');
+  assert.equal(saved.entries['common.productName'].translations.de.status, 'manual');
+});
+
+test('new extraction keys cannot collide with catalogue keys missing from memory', () => {
+  const dir = project({
+    'app/page.tsx': [
+      'export default function Page() {',
+      '  return <h1>New hardcoded copy</h1>;',
+      '}',
+    ].join('\n'),
+  });
+  const cfg = config();
+  saveConfig(dir, cfg);
+  fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'messages/en.json'), JSON.stringify({
+    common: { newHardcodedCopy: 'Existing message under the generated slug' },
+  }));
+  fs.writeFileSync(path.join(dir, 'messages/de.json'), JSON.stringify({
+    common: { newHardcodedCopy: 'Bestehende Nachricht' },
+  }));
+
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'extract', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  const source = readCatalog(dir, cfg, 'en');
+  const target = readCatalog(dir, cfg, 'de');
+  assert.equal(source['common.newHardcodedCopy'], 'Existing message under the generated slug');
+  assert.equal(target['common.newHardcodedCopy'], 'Bestehende Nachricht');
+  assert.ok(Object.values(source).includes('New hardcoded copy'));
+  assert.equal(Object.keys(source).length, 2);
 });

@@ -43,6 +43,12 @@ export class Backup {
     writeJson(statePath(this.cwd, 'last-backup.json'), { id: this.manifest.id, dir: path.relative(this.cwd, this.dir) });
     return this.manifest.id;
   }
+
+  rollback(): { restored: number; removed: number } {
+    const result = restoreFiles(this.cwd, this.manifest);
+    fs.rmSync(this.dir, { recursive: true, force: true });
+    return result;
+  }
 }
 
 export function revertLast(cwd: string): { restored: number; removed: number; id: string } | null {
@@ -51,6 +57,12 @@ export function revertLast(cwd: string): { restored: number; removed: number; id
   const manifest = readJson<Manifest | null>(path.join(cwd, pointer.dir, 'manifest.json'), null);
   if (!manifest) return null;
 
+  const { restored, removed } = restoreFiles(cwd, manifest);
+  fs.rmSync(statePath(cwd, 'last-backup.json'), { force: true });
+  return { restored, removed, id: manifest.id };
+}
+
+function restoreFiles(cwd: string, manifest: Manifest): { restored: number; removed: number } {
   let restored = 0;
   let removed = 0;
   for (const file of manifest.files) {
@@ -64,6 +76,5 @@ export function revertLast(cwd: string): { restored: number; removed: number; id
       removed++;
     }
   }
-  fs.rmSync(statePath(cwd, 'last-backup.json'), { force: true });
-  return { restored, removed, id: manifest.id };
+  return { restored, removed };
 }

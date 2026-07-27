@@ -112,8 +112,14 @@ export interface ExtractResult {
   backupId: string | null;
 }
 
-export function applyExtraction(cwd: string, plan: ExtractPlan, config: Config, dryRun = false): ExtractResult {
-  const backup = new Backup(cwd, 'extract');
+export function applyExtraction(
+  cwd: string,
+  plan: ExtractPlan,
+  config: Config,
+  dryRun = false,
+  transaction?: Backup
+): ExtractResult {
+  const backup = transaction ?? new Backup(cwd, 'extract');
   const byFile = new Map<string, Edit[]>();
   for (const edit of plan.edits) {
     if (!byFile.has(edit.file)) byFile.set(edit.file, []);
@@ -220,7 +226,13 @@ export function applyExtraction(cwd: string, plan: ExtractPlan, config: Config, 
     }
   }
 
-  return { applied, skipped, filesTouched, wiringAdded, backupId: dryRun ? null : backup.commit() };
+  return {
+    applied,
+    skipped,
+    filesTouched,
+    wiringAdded,
+    backupId: dryRun || transaction ? null : backup.commit(),
+  };
 }
 
 // ---------------------------------------------------------------------------
