@@ -8,3 +8,4 @@ dist/
 .language-loop/translations.json
 .language-loop/review.md
 tests/tmp/
+.worktrees/
