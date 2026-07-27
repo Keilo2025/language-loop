@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import { scanRepo, scanKeyUsage } from '../dist/core/scan.js';
 import { assignKeys } from '../dist/core/keys.js';
 import { planExtraction, applyExtraction } from '../dist/core/extract.js';
-import { defaultConfig } from '../dist/core/config.js';
+import { defaultConfig, saveConfig } from '../dist/core/config.js';
 import { loadMemory, saveMemory, deadKeys, pruneMemory } from '../dist/core/memory.js';
 import { nest } from '../dist/core/catalog.js';
 import { readJsonPrecious, writeJson } from '../dist/core/util.js';
@@ -47,6 +48,26 @@ function extract(dir, cfg = config()) {
   const plan = planExtraction(dir, keyed, cfg);
   return { scan, keyed, plan, result: applyExtraction(dir, plan, cfg, false) };
 }
+
+test('Cursor users are sent to the slash command after extraction', () => {
+  const dir = project({
+    'app/page.tsx': [
+      'export default function Page() {',
+      '  return <h1>Translate this heading</h1>;',
+      '}',
+    ].join('\n'),
+  });
+  saveConfig(dir, config({ agents: ['cursor'] }));
+
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'extract', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /\/language-loop translate/);
+  assert.doesNotMatch(run.stdout, /npx language-loop translate/);
+});
 
 // --- bug 4: multi-line JSX text ---------------------------------------------
 

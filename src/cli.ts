@@ -49,6 +49,12 @@ function listOf(name: string): string[] {
   return raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : [];
 }
 
+function nextCommand(config: Config, stage: string): string {
+  return config.agents.includes('cursor')
+    ? `/language-loop ${stage}`
+    : `npx language-loop ${stage}`;
+}
+
 main().catch((error: unknown) => {
   console.error('\n' + c.red(error instanceof Error ? error.message : String(error)) + '\n');
   process.exit(1);
@@ -362,7 +368,7 @@ function cmdExtract(): void {
   if (result.wiringAdded) console.log(`  ${c.green('+')} ${result.wiringAdded} import(s) and hook(s) added`);
   if (result.backupId) console.log(`\n  ${c.dim(`backed up — npx language-loop revert  undoes this`)}`);
 
-  nextStep(['npx language-loop translate  ' + c.dim('# brief your agent on what needs translating')]);
+  nextStep([nextCommand(config, 'translate') + '  ' + c.dim('# brief your agent on what needs translating')]);
 }
 
 async function cmdTranslate(): Promise<void> {

@@ -181,6 +181,10 @@ description: Run the full localization loop — scan, extract, translate, review
 
 Run the language loop on this project.
 
+When handing a stage back to a Cursor user, recommend the slash invocation
+\`/language-loop <stage>\` (for example, \`/language-loop translate\`). The \`npx\`
+forms below are terminal commands for you to run, not the next command to show the user.
+
 1. \`npx language-loop scan\` — report what is still hardcoded and where.
 2. \`npx language-loop extract\` — move those strings into keys and wire the runtime hook.
    Read the open items it reports; the ones it refused are yours to do by hand.
