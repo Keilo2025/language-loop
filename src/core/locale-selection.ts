@@ -2,12 +2,18 @@ import {
   COMMON_LOCALES,
   REGIONS,
   allCommonLocaleCodes,
+  allLocaleCodes,
   canonicalLocaleCode,
   localesForRegions,
   type LocaleRegion,
 } from './locales.js';
 
-export type LocaleSelectionMode = 'popular' | 'regions' | 'all' | 'custom';
+/**
+ * `all` is the audience locales — pt-BR, es-MX, the ones with a country and a
+ * dialect. `everything` is those plus the long tail of bare languages, for the
+ * rare project that really does want all 380-odd.
+ */
+export type LocaleSelectionMode = 'popular' | 'regions' | 'all' | 'everything' | 'custom';
 
 export interface LocaleSelectionInput {
   sourceLocale: string;
@@ -37,6 +43,9 @@ export function resolveLocaleSelection(input: LocaleSelectionInput): string[] {
   switch (input.mode) {
     case 'all':
       targets = allCommonLocaleCodes();
+      break;
+    case 'everything':
+      targets = allLocaleCodes();
       break;
     case 'regions':
       targets = localesForRegions(parseRegionCodes(input.regions ?? [])).map((locale) => locale.code);
