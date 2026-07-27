@@ -39,4 +39,9 @@ export {
 export type { CommonLocale, LocaleRegion, LocaleInfo } from './core/locales.js';
 export { resolveLocaleSelection, parseRegionCodes } from './core/locale-selection.js';
 export type { LocaleSelectionMode, LocaleSelectionInput } from './core/locale-selection.js';
+export { analyzeCompleteness } from './core/completeness.js';
+export type {
+  CompletenessFinding, CompletenessReport, LocaleCompleteness,
+  FindingKind, SuggestedAction,
+} from './core/completeness.js';
 export { translateWithLlm } from './core/llm.js';
