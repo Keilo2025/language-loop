@@ -15,7 +15,8 @@ forms below are terminal commands for you to run, not the next command to show t
 4. **Read the brief in full.** You are the translator. For each item, open the file it
    names before you write anything — the surrounding component tells you whether a word
    is a verb or a noun, and how much room the string has. Preserve every placeholder
-   exactly. Use ICU plurals where the language needs them.
+   exactly. Use ICU plurals where the language needs them. Write natural modern product
+   language for the selected audience locale, never literal textbook prose.
 5. Write `.language-loop/translations.json` in the schema at the bottom of the brief. Use
    the optional `note` field whenever you made a judgement call, so the reviewer knows
    what you decided and why.

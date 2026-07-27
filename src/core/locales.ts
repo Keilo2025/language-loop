@@ -18,13 +18,13 @@ export interface LocaleInfo {
   expansion: number;
   formalityMatters: boolean;
   plurals: string[];
+  translationGuidance?: string;
 }
 
 export interface CommonLocale extends LocaleInfo {
   nativeName: string;
   regions: LocaleRegion[];
   tier: 'popular' | 'common';
-  translationGuidance?: string;
 }
 
 export type { LocaleRegion };
