@@ -29,7 +29,7 @@ import {
 } from './core/locales.js';
 import { resolveLocaleSelection } from './core/locale-selection.js';
 import { Prompt, isInteractive } from './core/prompt.js';
-import { c, heading, nextStep, reportScan, reportStats } from './core/report.js';
+import { c, commandForStage, heading, nextStep, reportScan, reportStats } from './core/report.js';
 import { renderCompletenessReport } from './core/report.js';
 import { analyzeCompleteness } from './core/completeness.js';
 import { exists, readJson, truncate, writeJson } from './core/util.js';
@@ -63,12 +63,6 @@ function commonLocaleChoices(tier: 'popular' | 'common', sourceLocale: string) {
       label: `${locale.code.padEnd(12)} ${locale.english}`,
       hint: locale.nativeName,
     }));
-}
-
-function nextCommand(config: Config, stage: string): string {
-  return config.agents.includes('cursor')
-    ? `/language-loop ${stage}`
-    : `npx language-loop ${stage}`;
 }
 
 main().catch((error: unknown) => {
@@ -318,9 +312,9 @@ function finishInit(config: Config, runtimeInstalled: boolean): void {
   console.log(`  ${c.green('+')} .language-loop/memory.json  ${c.dim('— commit this; it is what makes re-runs cheap')}`);
 
   nextStep([
-    'npx language-loop scan       ' + c.dim('# see what is hardcoded'),
-    'npx language-loop extract    ' + c.dim('# move it into keys'),
-    'npx language-loop translate  ' + c.dim('# brief your agent'),
+    commandForStage(config, 'scan') + '       ' + c.dim('# see what is hardcoded'),
+    commandForStage(config, 'extract') + '    ' + c.dim('# move it into keys'),
+    commandForStage(config, 'translate') + '  ' + c.dim('# brief your agent'),
   ]);
 }
 
@@ -348,9 +342,15 @@ function cmdInstall(): void {
   }
 
   const { written, commands } = installAgents(cwd, ids);
+  const installedIds = ids.filter((id) => AGENTS.some((agent) => agent.id === id));
+  const existingConfig = loadConfig(cwd);
+  if (existingConfig) {
+    existingConfig.agents = [...new Set([...existingConfig.agents, ...installedIds])];
+    saveConfig(cwd, existingConfig);
+  }
   heading(`wired into ${ids.length} agent(s)`);
   for (const file of [...written, ...commands]) console.log(`  ${c.green('+')} ${file}`);
-  nextStep(['npx language-loop init  ' + c.dim('# pick your languages')]);
+  nextStep([commandForStage({ agents: installedIds }, 'init') + '  ' + c.dim('# pick your languages')]);
 }
 
 function cmdUninstall(): void {
@@ -374,7 +374,7 @@ function cmdScan(): void {
   }
 
   if (result.strings.length) {
-    nextStep(['npx language-loop extract  ' + c.dim('# move these into keys')]);
+    nextStep([commandForStage(config, 'extract') + '  ' + c.dim('# move these into keys')]);
   }
 }
 
@@ -451,9 +451,9 @@ function cmdExtract(): void {
     console.log(`  ${c.yellow('?')} ${dead.length} key(s) the code no longer calls — kept, use --prune to drop them`);
   }
   if (result.wiringAdded) console.log(`  ${c.green('+')} ${result.wiringAdded} import(s) and hook(s) added`);
-  if (result.backupId) console.log(`\n  ${c.dim(`backed up — npx language-loop revert  undoes this`)}`);
+  if (result.backupId) console.log(`\n  ${c.dim(`backed up — ${commandForStage(config, 'revert')}  undoes this`)}`);
 
-  nextStep([nextCommand(config, 'translate') + '  ' + c.dim('# brief your agent on what needs translating')]);
+  nextStep([commandForStage(config, 'translate') + '  ' + c.dim('# brief your agent on what needs translating')]);
 }
 
 async function cmdTranslate(): Promise<void> {
@@ -522,7 +522,7 @@ async function cmdTranslate(): Promise<void> {
 
   if (!marketing.installed && config.marketingLoop.enabled) {
     console.log('\n' + c.yellow('marketing-loop is not installed.') + c.dim(' You are about to translate whatever the'));
-    console.log(c.dim('English currently says. Run  npx language-loop sync-marketing  to read why that matters.'));
+    console.log(c.dim(`English currently says. Run  ${commandForStage(config, 'sync-marketing')}  to read why that matters.`));
   }
 
   // Awaited, not fired and forgotten: an unawaited rejection here escapes
@@ -535,7 +535,7 @@ async function cmdTranslate(): Promise<void> {
     c.bold('Read .language-loop/brief.md and write .language-loop/translations.json.'),
     c.dim('You are the translator — open the files the brief names before you write.'),
     '',
-    'then: npx language-loop review --ui',
+    `then: ${commandForStage(config, 'review --ui')}`,
   ]);
 }
 
@@ -544,7 +544,7 @@ async function runLlm(config: Config, work: ReturnType<typeof pendingWork>): Pro
   const result = await translateWithLlm(cwd, work, config);
   writeJson(statePath(cwd, 'translations.json'), { translations: result.translations, model: result.model });
   console.log(`  ${c.green('+')} .language-loop/translations.json  ${c.dim(`(${result.translations.length} from ${result.model})`)}`);
-  nextStep(['npx language-loop review --ui  ' + c.dim('# a human still approves')]);
+  nextStep([commandForStage(config, 'review --ui') + '  ' + c.dim('# a human still approves')]);
 }
 
 async function cmdReview(): Promise<void> {
@@ -592,7 +592,7 @@ async function cmdReview(): Promise<void> {
       }
       console.log(c.dim('  Fix the `to:` line in review.md and run --collect again.'));
     }
-    nextStep(['npx language-loop apply']);
+    nextStep([commandForStage(config, 'apply')]);
     return;
   }
 
@@ -600,7 +600,7 @@ async function cmdReview(): Promise<void> {
   if (!exists(file)) {
     throw new Error(
       'No .language-loop/translations.json.\n' +
-        'Run  npx language-loop translate  first, then read the brief and write that file.'
+        `Run  ${commandForStage(config, 'translate')}  first, then read the brief and write that file.`
     );
   }
 
@@ -658,8 +658,8 @@ async function cmdReview(): Promise<void> {
     console.log(`  ${c.green('+')} ${md}`);
     nextStep([
       'tick the boxes, edit any "to:" line you disagree with, then:',
-      'npx language-loop review --collect',
-      'npx language-loop apply',
+      commandForStage(config, 'review --collect'),
+      commandForStage(config, 'apply'),
     ]);
     return;
   }
@@ -678,7 +678,7 @@ async function cmdReview(): Promise<void> {
   server.close();
   const approved = Object.values(decisions).filter((d) => d.approved).length;
   console.log(`\n  ${c.green(String(approved))} approved, ${c.dim(String(Object.keys(decisions).length - approved))} rejected`);
-  nextStep(['npx language-loop apply']);
+  nextStep([commandForStage(config, 'apply')]);
 }
 
 function cmdApply(): void {
@@ -689,7 +689,7 @@ function cmdApply(): void {
   if (!Object.keys(decisions).length) {
     throw new Error(
       'No decisions to apply.\n' +
-        'Run  npx language-loop review --ui  (or  review  then  review --collect) and approve something first.'
+        `Run  ${commandForStage(config, 'review --ui')}  and approve something first.`
     );
   }
 
@@ -711,8 +711,8 @@ function cmdApply(): void {
   if (!dryRun) {
     fs.rmSync(statePath(cwd, 'decisions.json'), { force: true });
     fs.rmSync(statePath(cwd, 'translations.json'), { force: true });
-    console.log(`\n  ${c.dim('npx language-loop revert  undoes this')}`);
-    nextStep(['npx language-loop status  ' + c.dim('# coverage per language')]);
+    console.log(`\n  ${c.dim(`${commandForStage(config, 'revert')}  undoes this`)}`);
+    nextStep([commandForStage(config, 'status') + '  ' + c.dim('# coverage per language')]);
   }
 }
 
@@ -753,7 +753,7 @@ function cmdStatus(): void {
 
   if (scan.strings.length || work.length) {
     nextStep([
-      scan.strings.length ? 'npx language-loop extract' : 'npx language-loop translate',
+      commandForStage(config, scan.strings.length ? 'extract' : 'translate'),
     ]);
   }
 }
@@ -861,10 +861,11 @@ function cmdSyncMarketing(): void {
     console.log(c.yellow('  Those strings are frozen. Approve or reject the rewrites first:'));
     console.log('    npx marketing-loop review --ui');
     console.log('    npx marketing-loop apply');
-    console.log(c.dim('  Then come back and run  npx language-loop extract  to pick up the new English.'));
+    const extractCommand = config ? commandForStage(config, 'extract') : 'npx language-loop extract';
+    console.log(c.dim(`  Then come back and run  ${extractCommand}  to pick up the new English.`));
   } else {
     console.log('\n  Nothing pending. The English is settled — safe to translate.');
-    nextStep(['npx language-loop translate']);
+    nextStep([config ? commandForStage(config, 'translate') : 'npx language-loop translate']);
   }
 }
 

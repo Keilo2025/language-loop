@@ -204,6 +204,10 @@ forms below are terminal commands for you to run, not the next command to show t
 7. After they approve: \`npx language-loop apply\`.
 
 Report coverage per language at the end with \`npx language-loop status\`.
+
+In your final response, copy the CLI's displayed \`next\` command exactly. Never replace
+a Cursor slash command with an \`npx language-loop ...\` command. Cursor users should see
+\`/language-loop <stage>\`, \`/i18n-review\`, or \`/i18n-audit\` as appropriate.
 `,
   'i18n-audit': `---
 description: Report what is hardcoded and how complete each language is — no changes

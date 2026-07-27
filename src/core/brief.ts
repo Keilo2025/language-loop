@@ -4,6 +4,7 @@ import type { Config, Memory, WorkItem } from '../types.js';
 import { statePath } from './config.js';
 import { localeInfo } from './locales.js';
 import type { MarketingLoopState } from './marketing.js';
+import { commandForStage } from './report.js';
 import { truncate } from './util.js';
 
 /**
@@ -110,7 +111,7 @@ export function writeBrief(cwd: string, input: BriefInput): { file: string; unit
     lines.push('');
     lines.push(`${frozen.length} string(s) are excluded from this batch because marketing-loop has an open`);
     lines.push('rewrite for them. Translating copy that is about to change wastes the work twice over.');
-    lines.push('Approve or reject those rewrites first, then re-run `npx language-loop translate`.');
+    lines.push(`Approve or reject those rewrites first, then re-run \`${commandForStage(config, 'translate')}\`.`);
     lines.push('');
   }
 
@@ -180,8 +181,8 @@ export function writeBrief(cwd: string, input: BriefInput): { file: string; unit
   lines.push('Then run:');
   lines.push('');
   lines.push('```');
-  lines.push('npx language-loop review --ui   # a human approves');
-  lines.push('npx language-loop apply         # write the catalogues');
+  lines.push(`${commandForStage(config, 'review --ui')}   # a human approves`);
+  lines.push(`${commandForStage(config, 'apply')}         # write the catalogues`);
   lines.push('```');
   lines.push('');
 

@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { Config, GuardrailIssue, Memory, TranslationUnit } from '../types.js';
 import { statePath } from './config.js';
 import { localeInfo } from './locales.js';
+import { commandForStage } from './report.js';
 import { readJson, writeJson } from './util.js';
 
 /**
@@ -55,8 +56,8 @@ export function writeReviewMarkdown(cwd: string, bundle: ReviewBundle, config: C
   lines.push('when you run `--collect` is what gets written. Leave a box unticked to reject.');
   lines.push('');
   lines.push('```');
-  lines.push('npx language-loop review --collect');
-  lines.push('npx language-loop apply');
+  lines.push(commandForStage(config, 'review --collect'));
+  lines.push(commandForStage(config, 'apply'));
   lines.push('```');
   lines.push('');
 

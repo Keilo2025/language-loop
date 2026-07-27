@@ -12,6 +12,7 @@ import { defaultConfig, saveConfig } from '../dist/core/config.js';
 import { loadMemory, saveMemory, deadKeys, pruneMemory } from '../dist/core/memory.js';
 import { nest } from '../dist/core/catalog.js';
 import { readJsonPrecious, writeJson } from '../dist/core/util.js';
+import { commandForStage } from '../dist/core/report.js';
 
 /**
  * Regressions for the bugs found in the first scan. Each test is named for the
@@ -67,6 +68,58 @@ test('Cursor users are sent to the slash command after extraction', () => {
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /\/language-loop translate/);
   assert.doesNotMatch(run.stdout, /npx language-loop translate/);
+});
+
+test('Cursor users are sent to the slash command after scanning', () => {
+  const dir = project({
+    'app/page.tsx': [
+      'export default function Page() {',
+      '  return <h1>Extract this hardcoded heading</h1>;',
+      '}',
+    ].join('\n'),
+  });
+  saveConfig(dir, config({ agents: ['cursor'] }));
+
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'scan', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /\/language-loop extract/);
+  assert.doesNotMatch(run.stdout, /npx language-loop extract/);
+});
+
+test('Cursor stage handoffs consistently use installed slash commands', () => {
+  const cursor = config({ agents: ['cursor'] });
+  assert.equal(commandForStage(cursor, 'scan'), '/language-loop scan');
+  assert.equal(commandForStage(cursor, 'review --ui'), '/i18n-review');
+  assert.equal(commandForStage(cursor, 'audit'), '/i18n-audit');
+  assert.equal(commandForStage(config({ agents: ['codex'] }), 'scan'), 'npx language-loop scan');
+});
+
+test('installing the Cursor command records Cursor for future stage handoffs', () => {
+  const dir = project({
+    'app/page.tsx': 'export default function Page() { return <h1>Hardcoded heading</h1>; }',
+  });
+  saveConfig(dir, config({ agents: [] }));
+
+  const install = spawnSync(process.execPath, [
+    'dist/cli.js', 'install', '--cwd', dir, '--agents', 'cursor',
+  ], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+  assert.equal(install.status, 0, install.stderr);
+
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, 'language-loop.config.json'), 'utf8'));
+  assert.ok(saved.agents.includes('cursor'));
+
+  const scan = spawnSync(process.execPath, ['dist/cli.js', 'scan', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+  assert.match(scan.stdout, /\/language-loop extract/);
 });
 
 test('non-interactive init can select all common audience locales', () => {

@@ -57,10 +57,10 @@ export function reportScan(result: ScanResult, _config: Config): void {
   }
 }
 
-export function reportStats(stats: MemoryStats, _config: Config): void {
+export function reportStats(stats: MemoryStats, config: Config): void {
   heading(`${stats.keys} key(s) in the catalogue`);
   if (!stats.keys) {
-    console.log(c.dim('Run  npx language-loop extract  to create some.'));
+    console.log(c.dim(`Run  ${commandForStage(config, 'extract')}  to create some.`));
     return;
   }
   console.log('');
@@ -91,22 +91,15 @@ export function nextStep(lines: string[]): void {
   console.log('');
 }
 
-export function commandForAction(config: Config, action: SuggestedAction): string {
-  const cursor = config.agents.includes('cursor');
-  if (action === 'manual-extract') return 'Open the named files and move those strings into a shared translation helper or message map.';
-  if (cursor) {
-    if (action === 'review') return '/i18n-review';
-    const stage: Record<Exclude<SuggestedAction, 'manual-extract' | 'review'>, string> = {
-      extract: 'extract',
-      setup: 'init',
-      translate: 'translate',
-      retranslate: 'translate',
-      apply: 'apply',
-      prune: 'extract --prune',
-    };
-    return `/language-loop ${stage[action]}`;
-  }
+export function commandForStage(config: Pick<Config, 'agents'>, stage: string): string {
+  if (!config.agents.includes('cursor')) return `npx language-loop ${stage}`;
+  if (stage === 'review --ui') return '/i18n-review';
+  if (stage === 'audit') return '/i18n-audit';
+  return `/language-loop ${stage}`;
+}
 
+export function commandForAction(config: Config, action: SuggestedAction): string {
+  if (action === 'manual-extract') return 'Open the named files and move those strings into a shared translation helper or message map.';
   const stage: Record<Exclude<SuggestedAction, 'manual-extract'>, string> = {
     extract: 'extract',
     setup: 'init',
@@ -116,7 +109,7 @@ export function commandForAction(config: Config, action: SuggestedAction): strin
     apply: 'apply',
     prune: 'extract --prune',
   };
-  return `npx language-loop ${stage[action]}`;
+  return commandForStage(config, stage[action]);
 }
 
 export function renderCompletenessReport(report: CompletenessReport, config: Config): void {
