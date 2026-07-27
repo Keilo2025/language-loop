@@ -37,4 +37,6 @@ export {
   canonicalLocaleCode, allCommonLocaleCodes, localesForRegions,
 } from './core/locales.js';
 export type { CommonLocale, LocaleRegion, LocaleInfo } from './core/locales.js';
+export { resolveLocaleSelection, parseRegionCodes } from './core/locale-selection.js';
+export type { LocaleSelectionMode, LocaleSelectionInput } from './core/locale-selection.js';
 export { translateWithLlm } from './core/llm.js';
