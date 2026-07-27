@@ -20,7 +20,7 @@ different installers and a mismatch is confusing rather than fatal.
 The repository is its own marketplace — `.claude-plugin/marketplace.json` points at the root.
 
 ```
-/plugin marketplace add keilo2000/language-loop
+/plugin marketplace add Keilo2025/language-loop
 /plugin install language-loop@language-loop
 ```
 
@@ -43,8 +43,14 @@ Otherwise the Claude Code commands drift from the ones every other agent gets.
 
 ## Before a release
 
-- `npm test` — 31 tests, no network.
-- `node dist/cli.js scan --cwd tests/fixture` — sanity check the scanner on the fixture.
+- `npm test` — 41 tests, no network.
+- Sanity check the scanner on the fixture. It needs a config, so make one in a scratch copy:
+
+  ```
+  rm -rf /tmp/fx && cp -r tests/fixture /tmp/fx
+  node dist/cli.js init --cwd /tmp/fx --locales de
+  node dist/cli.js scan --cwd /tmp/fx
+  ```
 - Run the full loop against a real project once. The fixture cannot tell you whether the hook
   injection works on a file shape you have not seen.
 - Check `README.md` still describes what the CLI actually does. The help text and the README

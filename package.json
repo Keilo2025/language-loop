@@ -5,9 +5,9 @@
   "type": "module",
   "license": "MIT",
   "author": "Christian Buchholz",
-  "homepage": "https://github.com/keilo2000/language-loop#readme",
+  "homepage": "https://github.com/Keilo2025/language-loop#readme",
   "bugs": {
-    "url": "https://github.com/keilo2000/language-loop/issues"
+    "url": "https://github.com/Keilo2025/language-loop/issues"
   },
   "keywords": [
     "i18n",
@@ -60,7 +60,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/keilo2000/language-loop.git"
+    "url": "git+https://github.com/Keilo2025/language-loop.git"
   },
   "publishConfig": {
     "access": "public"

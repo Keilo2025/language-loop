@@ -264,6 +264,11 @@ copy actually gets edited — by a writer, by marketing-loop, by anyone who does
 a `.tsx` file. The loop watches that file. Change a headline there and every translation of it
 goes stale on the next run, by name.
 
+Memory also notices when a key leaves. A key is only dead once it is neither still hardcoded
+nor called anywhere in the code — deleting a page really does retire its strings, while a key
+extracted last month is left alone. They are reported and kept by default; `extract --prune`
+forgets them, so you stop paying to re-translate copy nothing renders.
+
 ---
 
 ## Install
@@ -326,7 +331,7 @@ place and `npx language-loop uninstall` removes it cleanly.
 ### As a Claude Code plugin
 
 ```
-/plugin marketplace add keilo2000/language-loop
+/plugin marketplace add Keilo2025/language-loop
 /plugin install language-loop@language-loop
 ```
 
@@ -344,7 +349,7 @@ You get:
 
 ## Working with marketing-loop
 
-If [`marketing-loop`](https://github.com/keilo2000/marketing-loop) is installed, the two hand
+If [`marketing-loop`](https://github.com/Keilo2025/marketing-loop) is installed, the two hand
 off to each other. If it is not, `language-loop` will explain once why you might want it, and
 then get out of the way.
 
