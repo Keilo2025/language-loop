@@ -579,7 +579,7 @@ async function cmdTranslate(): Promise<void> {
     c.bold('Read .language-loop/brief.md and write .language-loop/translations.json.'),
     c.dim('You are the translator — open the files the brief names before you write.'),
     '',
-    `then: ${commandForStage(config, 'review --ui')}`,
+    `then: ${commandForStage(config, 'apply')}`,
   ]);
 }
 
@@ -588,7 +588,7 @@ async function runLlm(config: Config, work: ReturnType<typeof pendingWork>): Pro
   const result = await translateWithLlm(cwd, work, config);
   writeJson(statePath(cwd, 'translations.json'), { translations: result.translations, model: result.model });
   console.log(`  ${c.green('+')} .language-loop/translations.json  ${c.dim(`(${result.translations.length} from ${result.model})`)}`);
-  nextStep([commandForStage(config, 'review --ui') + '  ' + c.dim('# a human still approves')]);
+  nextStep([commandForStage(config, 'apply') + '  ' + c.dim('# validate and write the catalogues')]);
 }
 
 async function cmdReview(): Promise<void> {
@@ -728,12 +728,61 @@ async function cmdReview(): Promise<void> {
 function cmdApply(): void {
   const config = requireConfig(cwd);
   const memory = loadMemory(cwd, config.sourceLocale);
-  const decisions = loadDecisions(cwd);
+  let decisions = loadDecisions(cwd);
+  let heldBack = 0;
 
   if (!Object.keys(decisions).length) {
-    throw new Error(
-      'No decisions to apply.\n' +
-        `Run  ${commandForStage(config, 'review --ui')}  and approve something first.`
+    const file = statePath(cwd, 'translations.json');
+    if (!exists(file)) {
+      throw new Error(
+        'No translations to apply.\n' +
+          `Run  ${commandForStage(config, 'translate')}  first, then write .language-loop/translations.json.`
+      );
+    }
+
+    const raw = readJson<{ translations?: { key: string; locale: string; value: string; note?: string }[] }>(file, {});
+    const incoming = raw.translations ?? [];
+    if (!incoming.length) throw new Error('translations.json has no "translations" array, or it is empty.');
+
+    const byId = new Map<string, (typeof incoming)[number]>();
+    for (const item of incoming) byId.set(unitId(item.key, item.locale), item);
+
+    const units: TranslationUnit[] = [];
+    for (const item of byId.values()) {
+      const entry = memory.entries[item.key];
+      if (!entry) {
+        heldBack++;
+        continue;
+      }
+      units.push({
+        key: item.key,
+        locale: item.locale,
+        source: entry.source,
+        value: item.value,
+        kind: entry.kind,
+        file: entry.file,
+        placeholders: entry.placeholders,
+        status: entry.translations[item.locale]?.status === 'stale' ? 'stale' : 'pending',
+        notes: item.note,
+      });
+    }
+
+    const issues = checkTranslations(units, config);
+    const unsafe = new Set(issues.map((issue) => unitId(issue.key, issue.locale)));
+    heldBack += unsafe.size;
+    decisions = Object.fromEntries(
+      units
+        .filter((unit) => !unsafe.has(unitId(unit.key, unit.locale)))
+        .map((unit) => [
+          unitId(unit.key, unit.locale),
+          {
+            key: unit.key,
+            locale: unit.locale,
+            approved: true,
+            value: unit.value,
+            editedByHuman: false,
+          } satisfies Decision,
+        ])
     );
   }
 
@@ -744,7 +793,8 @@ function cmdApply(): void {
   for (const file of result.written) console.log(`  ${dryRun ? c.dim('·') : c.green('+')} ${file}`);
 
   console.log('');
-  console.log(`  ${result.approved} translation(s) approved into the catalogues`);
+  console.log(`  ${result.approved} guardrail-clean translation(s) written to the catalogues`);
+  if (heldBack) console.log(`  ${c.yellow(`${heldBack} questionable or invalid translation(s) held back automatically`)}`);
   if (result.rejected) console.log(`  ${c.dim(`${result.rejected} rejected — they stay out and will be offered again next run`)}`);
   if (result.skippedManual) console.log(`  ${c.yellow(`${result.skippedManual} skipped — a human had already edited those by hand`)}`);
 
@@ -918,8 +968,8 @@ function cmdHelp(): void {
 ${c.bold('language-loop')} — i18n is the skeleton, l10n is the skin.
 
   ${c.dim('Scans your code for hardcoded words, turns them into keys, remembers what it')}
-  ${c.dim('already translated, and only translates what changed. A human approves before')}
-  ${c.dim('anything ships.')}
+  ${c.dim('already translated, and only translates what changed. Automated guardrails hold')}
+  ${c.dim('questionable or mechanically invalid translations back.')}
 
 ${c.bold('the loop')}
   npx language-loop install          wire it into the agents in this repo
@@ -927,8 +977,8 @@ ${c.bold('the loop')}
   npx language-loop scan             what is still hardcoded
   npx language-loop extract          move those strings into keys, wire the hook
   npx language-loop translate        write the brief; your agent does the language work
-  npx language-loop review --ui      a human approves, on a canvas
-  npx language-loop apply            write the catalogues
+  npx language-loop apply            validate translations and write safe ones
+  npx language-loop review --ui      optional expert review canvas
 
 ${c.bold('the rest')}
   npx language-loop status           coverage per language, what is stale

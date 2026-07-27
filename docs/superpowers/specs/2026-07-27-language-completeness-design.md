@@ -153,8 +153,8 @@ The audit calculates:
 
 The report distinguishes blocking incompleteness from quality warnings. A
 locale is complete only when it has no missing or stale keys and no blocking
-integrity failures. Pending work is reported separately because it still needs
-human approval.
+integrity failures. Pending work is reported separately because it has not
+passed the automated guardrails and reached a catalogue yet.
 
 ### Suggested next steps
 

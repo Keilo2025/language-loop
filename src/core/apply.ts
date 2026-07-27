@@ -8,10 +8,10 @@ import type { Decision } from './review.js';
 /**
  * Write the catalogues.
  *
- * Only approved translations get through, and only into catalogue files —
- * `apply` never touches source code. Anything a human edited on the canvas is
- * stored as `manual`, which means no later run will overwrite it, however
- * confident that run is.
+ * Only accepted translations get through, and only into catalogue files —
+ * `apply` never touches source code. Automatic intake accepts guardrail-clean
+ * entries; an optional human edit is stored as `manual`, which means no later
+ * run will overwrite it, however confident that run is.
  */
 
 export interface ApplyResult {

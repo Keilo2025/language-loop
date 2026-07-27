@@ -98,6 +98,81 @@ test('Cursor stage handoffs consistently use installed slash commands', () => {
   assert.equal(commandForStage(config({ agents: ['codex'] }), 'scan'), 'npx language-loop scan');
 });
 
+test('apply accepts a guardrail-clean translated batch without opening human review', () => {
+  const dir = project({});
+  const cfg = config();
+  saveConfig(dir, cfg);
+  const memory = emptyMemory();
+  memory.entries['common.helloWorld'] = {
+    source: 'Hello world',
+    sourceHash: 'current-hash',
+    namespace: 'common',
+    kind: 'body',
+    file: 'app/page.tsx',
+    placeholders: [],
+    firstSeen: '',
+    lastSeen: '',
+    translations: {},
+  };
+  saveMemory(dir, memory);
+  fs.mkdirSync(path.join(dir, '.language-loop'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.language-loop/translations.json'), JSON.stringify({
+    translations: [{
+      key: 'common.helloWorld',
+      locale: 'de',
+      value: 'Hallo Welt',
+    }],
+  }));
+
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'apply', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(readCatalog(dir, cfg, 'de')['common.helloWorld'], 'Hallo Welt');
+  assert.equal(loadMemory(dir, 'en').entries['common.helloWorld'].translations.de.status, 'approved');
+  assert.doesNotMatch(run.stdout, /review|approve something/i);
+});
+
+test('automatic apply holds flagged translations back instead of asking a non-speaker to decide', () => {
+  const dir = project({});
+  const cfg = config();
+  saveConfig(dir, cfg);
+  const memory = emptyMemory();
+  memory.entries['common.sourceCodeFragment'] = {
+    source: '(ADD_ONS); const parallaxRef = useRef',
+    sourceHash: 'current-hash',
+    namespace: 'common',
+    kind: 'body',
+    file: 'app/page.tsx',
+    placeholders: [],
+    firstSeen: '',
+    lastSeen: '',
+    translations: {},
+  };
+  saveMemory(dir, memory);
+  fs.mkdirSync(path.join(dir, '.language-loop'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.language-loop/translations.json'), JSON.stringify({
+    translations: [{
+      key: 'common.sourceCodeFragment',
+      locale: 'de',
+      value: '(ADD_ONS); const parallaxRef = useRef',
+      note: 'REJECT — extract error: source code fragment, not UI copy.',
+    }],
+  }));
+
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'apply', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(readCatalog(dir, cfg, 'de')['common.sourceCodeFragment'], undefined);
+  assert.match(run.stdout, /held back/i);
+  assert.doesNotMatch(run.stdout, /review --ui|i18n-review|approve something/i);
+});
+
 test('installing the Cursor command records Cursor for future stage handoffs', () => {
   const dir = project({
     'app/page.tsx': 'export default function Page() { return <h1>Hardcoded heading</h1>; }',
@@ -114,6 +189,11 @@ test('installing the Cursor command records Cursor for future stage handoffs', (
 
   const saved = JSON.parse(fs.readFileSync(path.join(dir, 'language-loop.config.json'), 'utf8'));
   assert.ok(saved.agents.includes('cursor'));
+  const installedCommand = fs.readFileSync(path.join(dir, '.cursor/commands/language-loop.md'), 'utf8');
+  const installedRule = fs.readFileSync(path.join(dir, '.cursor/rules/language-loop.mdc'), 'utf8');
+  assert.match(installedCommand, /language-loop apply/);
+  assert.doesNotMatch(installedCommand, /review --ui|human approves|approval/i);
+  assert.doesNotMatch(installedRule, /language-loop review|human approves|approval/i);
 
   const scan = spawnSync(process.execPath, ['dist/cli.js', 'scan', '--cwd', dir], {
     cwd: process.cwd(),

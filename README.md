@@ -13,8 +13,7 @@ npx language-loop init        # pick your agent and your languages
 npx language-loop scan        # find every hardcoded user-facing string
 npx language-loop extract     # turn them into keys and wire up the runtime
 npx language-loop translate   # brief your agent on what actually needs doing
-npx language-loop review --ui # a human approves, on a canvas
-npx language-loop apply       # write the catalogues
+npx language-loop apply       # validate and write safe translations
 npx language-loop audit       # read-only completeness report and ordered fixes
 ```
 
@@ -110,11 +109,7 @@ your codebase
      │◀────────────────────┘
      ▼
 ┌────────────┐
-│ guardrails │  lost placeholders, broken ICU, dropped brand names stop here
-└─────┬──────┘
-      ▼
-┌────────────┐
-│   HUMAN    │  canvas or markdown — approve, edit, reject
+│ guardrails │  questionable or invalid translations are held back automatically
 └─────┬──────┘
       ▼
 ┌────────────┐
@@ -181,10 +176,10 @@ than a translation API does, because the translator can see the button:
 A machine translation service gets the string. Your agent gets the string, the element, the
 component, and the reason the words are there.
 
-Standalone? `--llm` uses `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. The approval gate applies
-either way.
+Standalone? `--llm` uses `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. The same automated
+guardrails apply either way.
 
-### 4. Guardrails run before a human sees anything
+### 4. Guardrails decide what is safe to write
 
 **Blocked outright:** a placeholder present in the source and missing from the translation, or
 invented in the translation and absent from the source. Unbalanced HTML tags. Unbalanced ICU
@@ -192,7 +187,7 @@ braces. An ICU plural with no `other` branch. A brand name from `doNotTranslate`
 survive. An empty translation. And a translation that begins "Here is the German version:" —
 the failure mode where a model answers the brief instead of doing it.
 
-**Flagged for review:** a plural message missing a category the target language actually uses
+**Held back automatically:** a plural message missing a category the target language actually uses
 (Polish has four, Arabic has six — two branches is wrong for most numbers a user will see). A
 button three times the English length, which is a layout bug regardless of what it says. A
 glossary term rendered differently from the agreed translation. Copy identical to the source.
@@ -200,40 +195,35 @@ glossary term rendered differently from the agreed translation. Copy identical t
 `doctor` runs the same checks across catalogues you shipped months ago, not just the batch
 you are about to add.
 
-### 5. A human approves. Always.
+### 5. Apply validates and writes the safe translations
 
 ```
-npx language-loop review --ui
+npx language-loop apply
 ```
 
-A local page, `127.0.0.1`, no dependencies. `j`/`k` to move, `a` to approve, `r` to reject.
-Every translation is editable, and anything you edit is marked `manual` — locked against every
-future run of the loop. A fix you make by hand stays fixed.
+There is no approval screen in the ordinary workflow. Clean entries go directly to the
+catalogues; flagged or mechanically invalid entries stay out and are offered again on the next
+translation run. Most users cannot meaningfully approve languages they do not speak, while
+placeholder, ICU, brand-term, glossary, and layout checks can make a reliable automated safety
+decision.
 
-The reviewer usually cannot read most of the languages in front of them, and that is fine.
-Their job is not to check the German. It is to check the decisions: that the button still fits,
-that the brand name survived, that the formality choice suits the product, and that the note
-the translator left is a call this company wants to make.
-
-> **NOW** — Get started free
-> **PROPOSED** — Kostenlos starten
-> *note: two words so it fits the same button width*
-
-Prefer not to open a browser?
+If a fluent reviewer is available and you explicitly want an expert pass, the review tools
+remain optional:
 
 ```
+npx language-loop review --ui       # local review canvas
 npx language-loop review            # writes review.md with tick boxes
 npx language-loop review --collect  # reads your ticks back
 ```
 
-Works over SSH, in a PR diff, on a phone.
+Anything an expert edits is marked `manual` and locked against future automated runs.
 
 ### 6. Apply touches catalogues, never code
 
-Only approved translations. The English catalogue is regenerated from memory each time — it is
-a projection of the code, not something to hand-edit. Keys the code no longer has are reported
-and kept, because a key vanishes when someone comments a component out for an afternoon;
-`--prune` removes them when you mean it.
+Only guardrail-clean translations. The English catalogue is regenerated from memory each time —
+it is a projection of the code, not something to hand-edit. Keys the code no longer has are
+reported and kept, because a key vanishes when someone comments a component out for an
+afternoon; `--prune` removes them when you mean it.
 
 ```
 npx language-loop apply --dry-run
@@ -269,8 +259,8 @@ Five statuses, and the distinctions matter:
 | --- | --- |
 | `new` | never translated |
 | `stale` | the English changed after this was written — re-offered with the previous version attached |
-| `pending` | translated, waiting on a human |
-| `approved` | a human said yes |
+| `pending` | translated but not yet accepted into a catalogue |
+| `approved` | accepted by the automated guardrails |
 | `manual` | a human wrote or edited it directly — never overwritten, by anything |
 
 Once `extract` has run, the English lives in `messages/en.json`, and that becomes the place
@@ -483,8 +473,8 @@ const keyed = assignKeys(strings, config, memory);
 const work = pendingWork(memory, config);
 ```
 
-Every stage is exported, so the loop drops into CI, a git hook, or an MCP server. The approval
-gate is the one thing you should not automate away.
+Every stage is exported, so the loop drops into CI, a git hook, or an MCP server. Automatic
+guardrails are the default; expert review remains available when a fluent reviewer wants it.
 
 ---
 

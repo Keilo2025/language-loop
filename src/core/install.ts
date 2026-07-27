@@ -142,8 +142,7 @@ have just added a page or component with user-facing English in it — run the l
 npx language-loop scan       # what is still hardcoded
 npx language-loop extract    # move those strings into keys, wire up the hook
 npx language-loop translate  # writes .language-loop/brief.md for you
-npx language-loop review     # a human approves
-npx language-loop apply      # write the catalogues
+npx language-loop apply      # validate and write safe translations
 \`\`\`
 
 ### Your part
@@ -166,9 +165,9 @@ require effort:
 
 ### Rules
 
-- Never edit catalogue files by hand to add translations — \`apply\` writes those, after a
-  human approves. If you edit one anyway, the loop will notice and mark it \`manual\`, which
-  locks it against future runs.
+- Never edit catalogue files by hand to add translations — \`apply\` validates and writes
+  those. If you edit one anyway, the loop will notice and mark it \`manual\`, which locks it
+  against future runs.
 - Never invent a key. Keys come from \`extract\`.
 - Do not translate a string \`marketing-loop\` has an open rewrite for. The loop already
   excludes these; do not work around it.
@@ -179,7 +178,7 @@ require effort:
 
 export const COMMANDS: Record<string, string> = {
   'language-loop': `---
-description: Run the full localization loop — scan, extract, translate, review, apply
+description: Run the full localization loop — scan, extract, translate, validate, apply
 ---
 
 Run the language loop on this project.
@@ -198,16 +197,15 @@ forms below are terminal commands for you to run, not the next command to show t
    exactly. Use ICU plurals where the language needs them. Write natural modern product
    language for the selected audience locale, never literal textbook prose.
 5. Write \`.language-loop/translations.json\` in the schema at the bottom of the brief. Use
-   the optional \`note\` field whenever you made a judgement call, so the reviewer knows
-   what you decided and why.
-6. \`npx language-loop review --ui\` — hand over to the human. Do not approve on their behalf.
-7. After they approve: \`npx language-loop apply\`.
+   the optional \`note\` field whenever you made a judgement call.
+6. \`npx language-loop apply\` — automated guardrails hold questionable or mechanically
+   invalid translations back and write the safe translations to the catalogues.
 
 Report coverage per language at the end with \`npx language-loop status\`.
 
 In your final response, copy the CLI's displayed \`next\` command exactly. Never replace
 a Cursor slash command with an \`npx language-loop ...\` command. Cursor users should see
-\`/language-loop <stage>\`, \`/i18n-review\`, or \`/i18n-audit\` as appropriate.
+\`/language-loop <stage>\` or \`/i18n-audit\` as appropriate.
 `,
   'i18n-audit': `---
 description: Report what is hardcoded and how complete each language is — no changes

@@ -31,8 +31,7 @@ translates the delta rather than the app.
 npx language-loop scan       # what is still hardcoded
 npx language-loop extract    # move it into keys, wire the hook
 npx language-loop translate  # writes .language-loop/brief.md — then stops
-npx language-loop review     # a human approves (--ui for a canvas)
-npx language-loop apply      # write the catalogues
+npx language-loop apply      # validate and write safe translations
 npx language-loop audit      # read-only completeness report and ordered fixes
 ```
 
@@ -73,22 +72,21 @@ only if you use the advantage you have, which is that you can read the code:
    in one product. If the config says `auto`, pick what a product of this kind would use and
    note the choice, so the reviewer can overrule it in one place rather than four hundred.
 6. **Write a `note` whenever you made a call.** Shortened a button, chose informal address,
-   refused to translate an idiom literally — say so. The reviewer usually does not speak the
-   language and is reading your reasoning, not your grammar.
+   refused to translate an idiom literally — say so. The note makes automated holdbacks and
+   later expert review easier to understand.
 7. **Write like a native product team.** Translate intent, not word order. Avoid textbook,
    bureaucratic or needlessly formal prose, and use the selected audience locale's vocabulary
    and spelling.
 
-Write `.language-loop/translations.json` exactly as the brief specifies, then stop and hand
-over to `review`.
+Write `.language-loop/translations.json` exactly as the brief specifies, then run `apply`.
+Automated guardrails hold questionable or mechanically invalid entries back and write the
+safe translations to the catalogues. Do not open the review canvas in the ordinary flow.
 
 ## What you must not do
 
-- **Do not edit catalogue files to add translations.** `apply` writes those, after a human
-  approves. If you edit one anyway the loop will notice, mark it `manual` and lock it against
-  every future run — which is right for a human's edit and wrong for yours.
-- **Do not approve on the user's behalf.** The gate exists because a translation nobody read
-  is a translation nobody is accountable for.
+- **Do not edit catalogue files to add translations.** `apply` validates and writes those. If
+  you edit one anyway the loop will notice, mark it `manual` and lock it against every future
+  run — which is right for a human's edit and wrong for yours.
 - **Do not invent keys.** Keys come from `extract`.
 - **Do not work around the marketing-loop freeze.** If a string is excluded because a copy
   rewrite is pending, translating it wastes the work twice: once now, once when the English
@@ -126,4 +124,4 @@ validates the strings and catalogues that a switcher uses.
 
 - `references/frameworks.md` — how each runtime wants to be wired, and the mistakes specific to each
 - `references/icu.md` — plurals, selects, interpolation, and the rules per language
-- `references/reviewing.md` — how to help a reviewer who does not speak the languages
+- `references/reviewing.md` — optional expert review when a fluent reviewer is available

@@ -39,7 +39,7 @@ export function writeBrief(cwd: string, input: BriefInput): { file: string; unit
   lines.push('');
   lines.push('You are the translator. Read this whole file, then write `.language-loop/translations.json`');
   lines.push('in the schema at the bottom. Do not edit the catalogues directly — the loop writes those');
-  lines.push('after a human approves what you produce.');
+  lines.push('after automated guardrails accept what you produce.');
   lines.push('');
 
   lines.push('## What this project is');
@@ -175,14 +175,13 @@ export function writeBrief(cwd: string, input: BriefInput): { file: string; unit
   lines.push('}');
   lines.push('```');
   lines.push('');
-  lines.push('`note` is optional and shown to the reviewer. Use it when you made a judgement call —');
+  lines.push('`note` is optional. Use it when you made a judgement call —');
   lines.push('a formality choice, a shortened button, an idiom you did not translate literally.');
   lines.push('');
   lines.push('Then run:');
   lines.push('');
   lines.push('```');
-  lines.push(`${commandForStage(config, 'review --ui')}   # a human approves`);
-  lines.push(`${commandForStage(config, 'apply')}         # write the catalogues`);
+  lines.push(`${commandForStage(config, 'apply')}   # validate and write the catalogues`);
   lines.push('```');
   lines.push('');
 

@@ -1,10 +1,15 @@
 import {
+  COUNTRY_REGION,
+  DIALECT_RULE,
+  EXTENDED_LANGUAGE_CODES,
   POPULAR_LOCALE_CODES,
   REGIONS,
   REGION_LOCALE_CODES,
   TRANSLATION_GUIDANCE,
   type LocaleRegion,
 } from './locale-catalog.js';
+
+export { DIALECT_RULE };
 
 /**
  * The common audience locales offered during setup, plus the linguistic facts
@@ -24,7 +29,12 @@ export interface LocaleInfo {
 export interface CommonLocale extends LocaleInfo {
   nativeName: string;
   regions: LocaleRegion[];
-  tier: 'popular' | 'common';
+  /**
+   * `popular` and `common` are audience locales with a country attached —
+   * pt-BR, not pt. `extended` is the long tail of languages ICU knows about,
+   * offered so the picker can honestly claim to list every written language.
+   */
+  tier: 'popular' | 'common' | 'extended';
 }
 
 export type { LocaleRegion };
@@ -90,22 +100,103 @@ for (const region of REGIONS) {
   }
 }
 
-export const COMMON_LOCALES: CommonLocale[] = [...regionsByCode].map(([code, regions]) => {
+/**
+ * Where ICU thinks a language is mainly spoken. `sw` maximises to `sw-Latn-TZ`,
+ * which lands in Africa. This is what lets region selection cover the long tail
+ * without anybody maintaining a list of 180 languages by hand.
+ */
+function regionsFor(code: string): LocaleRegion[] {
+  const explicit = regionsByCode.get(code);
+  if (explicit) return explicit;
+  try {
+    const country = new Intl.Locale(code).maximize().region;
+    const region = country ? COUNTRY_REGION[country] : undefined;
+    return region ? [region] : [];
+  } catch {
+    return [];
+  }
+}
+
+const regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
+const scriptNames = new Intl.DisplayNames(['en'], { type: 'script' });
+
+/**
+ * A regional tag is a promise that the copy will sound local. Say so explicitly
+ * for every one of them, not just the dozen with a hand-written note.
+ */
+function guidanceFor(code: string): string | undefined {
+  const explicit = TRANSLATION_GUIDANCE[code];
+  if (explicit) return explicit;
+
+  let parsed: Intl.Locale;
+  try {
+    parsed = new Intl.Locale(code);
+  } catch {
+    return undefined;
+  }
+  const country = parsed.region;
+  if (!country) return undefined;
+
+  // The bare language name, not the locale's — "Spanish of Chile", never
+  // "Spanish (Chile) of Chile".
+  const language = englishNames.of(parsed.language) ?? parsed.language;
+  const where = (() => {
+    try {
+      return regionNames.of(country) ?? country;
+    } catch {
+      return country;
+    }
+  })();
+  const script = parsed.script ? `, in ${scriptNames.of(parsed.script) ?? parsed.script} script` : '';
+
+  return `Use the everyday ${language} of ${where}${script} — the wording a native speaker there would actually use, not a neutral or textbook variety.`;
+}
+
+function entry(code: string, tier: CommonLocale['tier']): CommonLocale {
   const nativeName = displayName(code, code);
+  const english = englishNames.of(code) ?? code;
   return {
     code,
     name: nativeName,
     nativeName,
-    english: englishNames.of(code) ?? code,
-    regions,
-    tier: popular.has(code) ? 'popular' as const : 'common' as const,
-    translationGuidance: TRANSLATION_GUIDANCE[code],
+    english,
+    regions: regionsFor(code),
+    tier,
+    translationGuidance: guidanceFor(code),
     ...profile(code),
   };
-}).sort((a, b) => {
-  if (a.tier !== b.tier) return a.tier === 'popular' ? -1 : 1;
+}
+
+const curated: CommonLocale[] = [...regionsByCode].map(([code]) =>
+  entry(code, popular.has(code) ? 'popular' : 'common')
+);
+
+const seen = new Set(curated.map((locale) => locale.code.toLowerCase()));
+
+const extended: CommonLocale[] = EXTENDED_LANGUAGE_CODES.flatMap((raw) => {
+  let code: string;
+  try {
+    code = canonicalLocaleCode(raw);
+  } catch {
+    return [];
+  }
+  if (seen.has(code.toLowerCase())) return [];
+  // ICU returning the code back means it has no data for it — offering a
+  // language we cannot even name would be worse than leaving it out.
+  if ((englishNames.of(code) ?? code) === code) return [];
+  seen.add(code.toLowerCase());
+  return [entry(code, 'extended')];
+});
+
+const TIER_ORDER: Record<CommonLocale['tier'], number> = { popular: 0, common: 1, extended: 2 };
+
+export const COMMON_LOCALES: CommonLocale[] = [...curated, ...extended].sort((a, b) => {
+  if (a.tier !== b.tier) return TIER_ORDER[a.tier] - TIER_ORDER[b.tier];
   return a.english.localeCompare(b.english) || a.code.localeCompare(b.code);
 });
+
+/** Audience locales — the ones with a country attached. The default offer. */
+export const AUDIENCE_LOCALES: CommonLocale[] = COMMON_LOCALES.filter((l) => l.tier !== 'extended');
 
 const BY_CODE = new Map(COMMON_LOCALES.map((locale) => [locale.code.toLowerCase(), locale]));
 
@@ -113,8 +204,26 @@ const BY_CODE = new Map(COMMON_LOCALES.map((locale) => [locale.code.toLowerCase(
 export const LOCALES: LocaleInfo[] = COMMON_LOCALES;
 export const POPULAR = COMMON_LOCALES.filter((locale) => locale.tier === 'popular').map((locale) => locale.code);
 
+/** The audience locales — pt-BR and friends. What "all common languages" means. */
 export function allCommonLocaleCodes(): string[] {
+  return AUDIENCE_LOCALES.map((locale) => locale.code);
+}
+
+/** Everything the catalogue knows, long tail included. */
+export function allLocaleCodes(): string[] {
   return COMMON_LOCALES.map((locale) => locale.code);
+}
+
+/** Fuzzy lookup over code, English name and endonym, for the picker's search. */
+export function searchLocales(query: string): CommonLocale[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return COMMON_LOCALES.filter(
+    (locale) =>
+      locale.code.toLowerCase().includes(q) ||
+      locale.english.toLowerCase().includes(q) ||
+      locale.nativeName.toLowerCase().includes(q)
+  );
 }
 
 export function localesForRegions(regions: LocaleRegion[]): CommonLocale[] {

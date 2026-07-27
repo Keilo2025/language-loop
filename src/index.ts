@@ -2,9 +2,9 @@
  * Programmatic access to every stage of the loop.
  *
  * The stages are exported separately on purpose: the loop drops into CI, a git
- * hook or an MCP server one piece at a time. The one thing not to automate
- * away is the approval gate — a translation nobody read is a translation
- * nobody is accountable for.
+ * hook or an MCP server one piece at a time. Automated guardrails keep broken
+ * or questionable translations out; the review canvas remains available as
+ * an optional expert tool.
  */
 
 export type {

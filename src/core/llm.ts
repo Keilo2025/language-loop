@@ -8,7 +8,7 @@ import { localeInfo } from './locales.js';
  *
  * Inside a coding agent this file never runs — the agent is the model, reads
  * the brief and writes the translations. `--llm` exists for CI and cron, where
- * nobody is watching. The approval gate still applies afterwards either way.
+ * nobody is watching. The same automated guardrails apply afterwards either way.
  */
 
 export interface LlmResult {

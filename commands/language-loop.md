@@ -1,5 +1,5 @@
 ---
-description: Run the full localization loop — scan, extract, translate, review, apply
+description: Run the full localization loop — scan, extract, translate, validate, apply
 ---
 
 Run the language loop on this project.
@@ -18,13 +18,12 @@ forms below are terminal commands for you to run, not the next command to show t
    exactly. Use ICU plurals where the language needs them. Write natural modern product
    language for the selected audience locale, never literal textbook prose.
 5. Write `.language-loop/translations.json` in the schema at the bottom of the brief. Use
-   the optional `note` field whenever you made a judgement call, so the reviewer knows
-   what you decided and why.
-6. `npx language-loop review --ui` — hand over to the human. Do not approve on their behalf.
-7. After they approve: `npx language-loop apply`.
+   the optional `note` field whenever you made a judgement call.
+6. `npx language-loop apply` — automated guardrails hold questionable or mechanically
+   invalid translations back and write the safe translations to the catalogues.
 
 Report coverage per language at the end with `npx language-loop status`.
 
 In your final response, copy the CLI's displayed `next` command exactly. Never replace
 a Cursor slash command with an `npx language-loop ...` command. Cursor users should see
-`/language-loop <stage>`, `/i18n-review`, or `/i18n-audit` as appropriate.
+`/language-loop <stage>` or `/i18n-audit` as appropriate.
