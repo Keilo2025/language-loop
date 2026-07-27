@@ -1,0 +1,68 @@
+{
+  "name": "language-loop",
+  "version": "0.1.0",
+  "description": "A localization loop for vibe-coding agents. Scans your code, replaces hardcoded strings with i18n keys, remembers what it already translated, and only translates what actually changed — with a human approving before anything ships.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Christian Buchholz",
+  "homepage": "https://github.com/keilo2000/language-loop#readme",
+  "bugs": {
+    "url": "https://github.com/keilo2000/language-loop/issues"
+  },
+  "keywords": [
+    "i18n",
+    "l10n",
+    "internationalization",
+    "localization",
+    "translation",
+    "next-intl",
+    "react-i18next",
+    "vue-i18n",
+    "claude-code",
+    "cursor",
+    "codex",
+    "agents",
+    "ai-agent",
+    "plugin",
+    "vibe-coding"
+  ],
+  "bin": {
+    "language-loop": "dist/cli.js",
+    "lloop": "dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./locales": "./dist/core/locales.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "commands",
+    "agents",
+    ".claude-plugin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
+    "test": "npm run build && node --test \"tests/**/*.test.js\"",
+    "loop": "node dist/cli.js",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm test"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.7.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keilo2000/language-loop.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

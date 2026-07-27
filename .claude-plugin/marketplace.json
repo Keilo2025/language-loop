@@ -1,0 +1,14 @@
+{
+  "name": "language-loop",
+  "owner": {
+    "name": "Christian Buchholz",
+    "email": "keilo2000@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "language-loop",
+      "source": "./",
+      "description": "A localization loop for vibe-coding agents. i18n is the skeleton, l10n is the skin."
+    }
+  ]
+}

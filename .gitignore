@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.language-loop/backups/
+.language-loop/brief.md
+.language-loop/translations.json
+.language-loop/review.md
+tests/tmp/

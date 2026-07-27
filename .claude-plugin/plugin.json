@@ -1,0 +1,22 @@
+{
+  "name": "language-loop",
+  "version": "0.1.0",
+  "description": "Scans your code for hardcoded words, turns them into i18n keys, remembers what it already translated, and only translates what changed — with a human approving before anything ships.",
+  "author": {
+    "name": "Christian Buchholz",
+    "email": "keilo2000@gmail.com"
+  },
+  "homepage": "https://github.com/keilo2000/language-loop",
+  "repository": "https://github.com/keilo2000/language-loop",
+  "license": "MIT",
+  "keywords": [
+    "i18n",
+    "l10n",
+    "internationalization",
+    "localization",
+    "translation",
+    "next-intl",
+    "react-i18next",
+    "vue-i18n"
+  ]
+}
