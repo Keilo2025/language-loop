@@ -121,3 +121,25 @@ test('completeness analysis is byte-for-byte read-only', () => {
   analyzeCompleteness(dir, config);
   assert.deepEqual(snapshot(dir), before);
 });
+
+test('source catalogue edits are reported as stale without adopting them', () => {
+  const { dir, config } = fixture();
+  const memoryFile = path.join(dir, '.language-loop/memory.json');
+  const memory = JSON.parse(fs.readFileSync(memoryFile, 'utf8'));
+  memory.entries['hero.title'].translations['de-DE'].status = 'approved';
+  fs.writeFileSync(memoryFile, JSON.stringify(memory, null, 2) + '\n');
+  writeCatalog(dir, config, 'en-US', {
+    'hero.title': 'Welcome to your workspace',
+    'hero.greeting': 'Hello {name}',
+    'hero.pending': 'Choose a plan today',
+    'hero.missing': 'Create your first project',
+  });
+  const before = snapshot(dir);
+
+  const report = analyzeCompleteness(dir, config);
+
+  const stale = report.findings.find((finding) => finding.kind === 'stale');
+  assert.ok(stale);
+  assert.ok(stale.keys.includes('hero.title'));
+  assert.deepEqual(snapshot(dir), before);
+});

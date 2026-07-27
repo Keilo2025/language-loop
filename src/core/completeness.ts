@@ -74,7 +74,13 @@ export function analyzeCompleteness(cwd: string, config: Config): CompletenessRe
   const scanned = scanRepo(cwd, config);
   const usedKeys = scanKeyUsage(cwd, config);
   const memorySource = sourceCatalog(memory);
-  const source = { ...memorySource, ...readCatalog(cwd, config, config.sourceLocale) };
+  const diskSource = readCatalog(cwd, config, config.sourceLocale);
+  const source = { ...memorySource, ...diskSource };
+  const sourceEdits = new Set(
+    Object.entries(memory.entries)
+      .filter(([key, entry]) => diskSource[key]?.trim() && diskSource[key] !== entry.source)
+      .map(([key]) => key)
+  );
 
   if (scanned.strings.length) {
     findings.push({
@@ -155,10 +161,16 @@ export function analyzeCompleteness(cwd: string, config: Config): CompletenessRe
           missing.push(key);
         }
       } else {
-        countStatus(counts, translation.status);
-        if (translation.status === 'stale') stale.push(key);
-        if (translation.status === 'pending') pending.push(key);
+        const effectivelyStale = translation.status === 'stale' || sourceEdits.has(key);
+        if (effectivelyStale) {
+          counts.stale++;
+          stale.push(key);
+        } else {
+          countStatus(counts, translation.status);
+          if (translation.status === 'pending') pending.push(key);
+        }
         if (
+          !effectivelyStale &&
           (translation.status === 'approved' || translation.status === 'manual') &&
           catalogValue !== translation.value
         ) {
