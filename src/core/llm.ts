@@ -73,8 +73,10 @@ async function callOpenAi(prompt: string, apiKey: string, work: WorkItem[]): Pro
     }),
   });
   if (!response.ok) throw new Error(`OpenAI API ${response.status}: ${await response.text()}`);
-  const json = (await response.json()) as { choices: { message: { content: string } }[] };
-  return { translations: parseTranslations(json.choices[0]!.message.content), model };
+  const json = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+  const content = json.choices?.[0]?.message?.content;
+  if (!content) throw new Error(`OpenAI returned no message content. Raw response: ${JSON.stringify(json).slice(0, 400)}`);
+  return { translations: parseTranslations(content), model };
 }
 
 function parseTranslations(text: string): LlmResult['translations'] {

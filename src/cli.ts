@@ -5,16 +5,18 @@ import process from 'node:process';
 
 import { CONFIG_FILE, defaultConfig, loadConfig, requireConfig, saveConfig, statePath } from './core/config.js';
 import { detect } from './core/detect.js';
-import { scanRepo } from './core/scan.js';
+import { scanKeyUsage, scanRepo } from './core/scan.js';
 import { assignKeys } from './core/keys.js';
 import { applyExtraction, planExtraction } from './core/extract.js';
 import {
-  adoptCatalogEdits, adoptSourceEdits, loadMemory, pendingWork, saveMemory, sourceCatalog, stats, syncMemory,
+  adoptCatalogEdits, adoptSourceEdits, deadKeys, loadMemory, pendingWork, pruneMemory, saveMemory,
+  sourceCatalog, stats, syncMemory,
 } from './core/memory.js';
 import { writeBrief } from './core/brief.js';
 import { checkTranslations, partition } from './core/guardrails.js';
 import {
   collectReviewMarkdown, loadDecisions, saveDecisions, serveReview, unitId, writeReviewMarkdown,
+  type Decision,
 } from './core/review.js';
 import { applyDecisions } from './core/apply.js';
 import { detectMarketingLoop, frozenTexts, marketingLoopPitch } from './core/marketing.js';
@@ -89,13 +91,17 @@ async function cmdInit(): Promise<void> {
   for (const line of detection.evidence) console.log(`  · ${line}`);
 
   if (!isInteractive()) {
-    // Non-interactive: take everything from flags so CI can call this.
-    config.locales = listOf('--locales');
-    config.sourceLocale = valueOf('--source') ?? 'en';
-    config.agents = listOf('--agents');
+    // Non-interactive: take what the flags say and leave the rest alone. A
+    // re-run in CI without --agents used to unwire every agent, and without
+    // --source used to reset sourceLocale to 'en' — silently, on a project
+    // whose English was actually German.
+    if (valueOf('--locales') !== undefined) config.locales = listOf('--locales');
+    if (valueOf('--source') !== undefined) config.sourceLocale = valueOf('--source')!;
+    if (valueOf('--agents') !== undefined) config.agents = listOf('--agents');
     if (!config.locales.length) {
       throw new Error('Not a TTY, so init needs --locales, e.g.  npx language-loop init --locales de,fr,ja --agents claude');
     }
+    if (!config.locales.includes(config.sourceLocale)) config.locales.unshift(config.sourceLocale);
     finishInit(config, detection.runtimeInstalled);
     return;
   }
@@ -334,6 +340,13 @@ function cmdExtract(): void {
   const applied = new Set(result.applied.map((e) => e.key));
   const landed = keyed.filter((k) => applied.has(k.key));
   const sync = syncMemory(memory, landed, config);
+
+  // What is genuinely gone, as opposed to merely already extracted. Checked
+  // against the keys the code actually calls, not against this scan — a key
+  // extracted last run is absent from the scan because the loop worked.
+  const dead = deadKeys(memory, config, scanKeyUsage(cwd, config), new Set(keyed.map((k) => k.key)));
+  const pruned = flags.has('--prune') ? pruneMemory(memory, dead) : [];
+
   saveMemory(cwd, memory);
   writeJson(statePath(cwd, 'open-items.json'), plan.openItems);
 
@@ -341,14 +354,18 @@ function cmdExtract(): void {
   console.log(`  ${c.green('+')} ${sync.added.length} new key(s)`);
   if (sync.changed.length) console.log(`  ${c.yellow('~')} ${sync.changed.length} key(s) whose English changed — their translations are now stale`);
   console.log(`  ${c.dim('=')} ${sync.unchanged.length} unchanged`);
-  if (sync.disappeared.length) console.log(`  ${c.dim('?')} ${sync.disappeared.length} key(s) not found in the code this run`);
+  if (pruned.length) {
+    console.log(`  ${c.red('-')} ${pruned.length} key(s) the code no longer calls — dropped`);
+  } else if (dead.length) {
+    console.log(`  ${c.yellow('?')} ${dead.length} key(s) the code no longer calls — kept, use --prune to drop them`);
+  }
   if (result.wiringAdded) console.log(`  ${c.green('+')} ${result.wiringAdded} import(s) and hook(s) added`);
   if (result.backupId) console.log(`\n  ${c.dim(`backed up — npx language-loop revert  undoes this`)}`);
 
   nextStep(['npx language-loop translate  ' + c.dim('# brief your agent on what needs translating')]);
 }
 
-function cmdTranslate(): void {
+async function cmdTranslate(): Promise<void> {
   const config = requireConfig(cwd);
   const memory = loadMemory(cwd, config.sourceLocale);
 
@@ -380,34 +397,47 @@ function cmdTranslate(): void {
     []
   );
 
+  // One batch, decided here, and everything downstream uses it: the brief, the
+  // counts on screen and the LLM request. They used to disagree — the brief was
+  // truncated to maxBatch while the count and the token budget were sized off
+  // the full backlog.
+  const batch = usable.slice(0, config.maxBatch);
+  const heldBack = usable.length - batch.length;
+
   const brief = writeBrief(cwd, {
     config,
     memory,
-    work: usable,
+    work: batch,
     marketing,
     openItems,
     frozen: work.filter((w) => frozen.has(w.source)).map((w) => w.source),
   });
   saveMemory(cwd, memory);
 
-  heading(`${usable.length} item(s) need translating`);
+  heading(`${batch.length} item(s) need translating`);
   const byLocale = new Map<string, number>();
-  for (const item of usable) byLocale.set(item.locale, (byLocale.get(item.locale) ?? 0) + 1);
+  for (const item of batch) byLocale.set(item.locale, (byLocale.get(item.locale) ?? 0) + 1);
   for (const [locale, count] of [...byLocale].sort((a, b) => b[1] - a[1])) {
     console.log(`  ${String(count).padStart(4)}  ${locale} ${c.dim(localeInfo(locale).english)}`);
   }
 
   console.log('');
   console.log(`  ${c.green('+')} ${brief.file}  ${c.dim(`(${brief.units} item(s))`)}`);
+  if (heldBack) {
+    console.log(
+      c.dim(`  ${heldBack} more held back — maxBatch is ${config.maxBatch}. Run translate again after this batch lands.`)
+    );
+  }
 
   if (!marketing.installed && config.marketingLoop.enabled) {
     console.log('\n' + c.yellow('marketing-loop is not installed.') + c.dim(' You are about to translate whatever the'));
     console.log(c.dim('English currently says. Run  npx language-loop sync-marketing  to read why that matters.'));
   }
 
+  // Awaited, not fired and forgotten: an unawaited rejection here escapes
+  // main()'s catch and buries a written-for-humans error under a stack trace.
   if (flags.has('--llm')) {
-    void runLlm(config, usable);
-    return;
+    return runLlm(config, batch);
   }
 
   nextStep([
@@ -431,11 +461,46 @@ async function cmdReview(): Promise<void> {
   const memory = loadMemory(cwd, config.sourceLocale);
 
   if (flags.has('--collect')) {
-    const decisions = collectReviewMarkdown(cwd);
+    const collected = collectReviewMarkdown(cwd);
+
+    // The canvas re-checks whatever the reviewer typed; markdown used to go
+    // straight through. A human editing a `to:` line can drop a {count} just as
+    // easily as a model can, so the same guardrails apply to both paths.
+    const edited: TranslationUnit[] = [];
+    for (const decision of Object.values(collected)) {
+      const entry = memory.entries[decision.key];
+      if (!entry) continue;
+      edited.push({
+        key: decision.key,
+        locale: decision.locale,
+        source: entry.source,
+        value: decision.value,
+        kind: entry.kind,
+        file: entry.file,
+        placeholders: entry.placeholders,
+        status: 'pending',
+      });
+    }
+    const blocking = checkTranslations(edited, config).filter((i) => i.severity === 'block');
+    const bad = new Set(blocking.map((i) => unitId(i.key, i.locale)));
+
+    const decisions: Record<string, Decision> = {};
+    for (const [id, decision] of Object.entries(collected)) {
+      if (decision.approved && bad.has(id)) continue;
+      decisions[id] = decision;
+    }
     saveDecisions(cwd, decisions);
+
     const approved = Object.values(decisions).filter((d) => d.approved).length;
     heading(`collected ${Object.keys(decisions).length} decision(s)`);
     console.log(`  ${c.green(String(approved))} approved, ${c.dim(String(Object.keys(decisions).length - approved))} rejected`);
+    if (bad.size) {
+      console.log(c.red(`  ${bad.size} approved edit(s) held back — they break something mechanically:`));
+      for (const issue of blocking.slice(0, 8)) {
+        console.log(`    ${c.dim(`${issue.key} · ${issue.locale}`)} — ${issue.message}`);
+      }
+      console.log(c.dim('  Fix the `to:` line in review.md and run --collect again.'));
+    }
     nextStep(['npx language-loop apply']);
     return;
   }
@@ -563,13 +628,19 @@ function cmdApply(): void {
 function cmdStatus(): void {
   const config = requireConfig(cwd);
   const memory = loadMemory(cwd, config.sourceLocale);
+
+  // status reports; it does not decide. It used to adopt catalogue edits and
+  // save, which meant merely asking how things were going could lock a
+  // translation as `manual` — a status no later run will overwrite.
   const rewritten = adoptSourceEdits(cwd, memory, config);
-  adoptCatalogEdits(cwd, memory, config);
-  saveMemory(cwd, memory);
+  const wouldAdopt = adoptCatalogEdits(cwd, memory, config);
   reportStats(stats(memory, config), config);
   if (rewritten.length) {
     console.log('');
     console.log(c.yellow(`  ${rewritten.length} English string(s) have been edited since they were translated.`));
+  }
+  if (wouldAdopt) {
+    console.log(c.dim(`  ${wouldAdopt} hand-written translation(s) in the catalogues not yet adopted — translate picks them up.`));
   }
 
   const work = pendingWork(memory, config);
@@ -628,8 +699,9 @@ function cmdDoctor(): void {
     problems += missing.length ? 1 : 0;
 
     // Integrity of what is already shipped, not just what is about to be.
+    if (locale === config.sourceLocale) continue;
     const units: TranslationUnit[] = Object.entries(catalog)
-      .filter(([key]) => key in source && locale !== config.sourceLocale)
+      .filter(([key]) => key in source)
       .map(([key, value]) => ({
         key,
         locale,
@@ -730,7 +802,8 @@ ${c.bold('flags')}
   --locales de,fr    limit translate to some languages
   --llm              translate without an agent, using ANTHROPIC_API_KEY or OPENAI_API_KEY
   --ui / --collect   canvas review, or read your ticks back out of review.md
-  --prune            on apply: drop catalogue keys the code no longer has
+  --prune            on extract: forget memory keys the code no longer calls
+                     on apply: drop catalogue keys the code no longer has
   --all / --list     on install: every agent, or show the ids
 
 ${c.dim('Full documentation: https://github.com/keilo2000/language-loop')}

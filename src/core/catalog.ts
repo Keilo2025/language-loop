@@ -84,10 +84,26 @@ export function nest(flat: Flat, keyStyle: 'nested' | 'flat'): Record<string, un
     let node = out;
     for (let i = 0; i < parts.length - 1; i++) {
       const part = parts[i]!;
+      // `a.b` and `a.b.c` cannot both exist in a nested catalogue: one has to
+      // be a string where the other needs an object. Silently overwriting lost
+      // a translation, so say which two keys are fighting instead.
+      if (typeof node[part] === 'string') {
+        throw new Error(
+          `Cannot nest "${key}": "${parts.slice(0, i + 1).join('.')}" is already a translation, not a group.\n` +
+            'Rename one of them, or set "keyStyle": "flat" in language-loop.config.json.'
+        );
+      }
       if (typeof node[part] !== 'object' || node[part] === null) node[part] = {};
       node = node[part] as Record<string, unknown>;
     }
-    node[parts[parts.length - 1]!] = value;
+    const leaf = parts[parts.length - 1]!;
+    if (node[leaf] !== undefined && typeof node[leaf] === 'object') {
+      throw new Error(
+        `Cannot write "${key}": it is already a group of other keys.\n` +
+          'Rename one of them, or set "keyStyle": "flat" in language-loop.config.json.'
+      );
+    }
+    node[leaf] = value;
   }
   return out;
 }

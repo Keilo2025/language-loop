@@ -76,6 +76,41 @@ export function scanRepo(cwd: string, config: Config): ScanResult {
   return { strings: dedupe(strings), filesScanned: files.length, filesAlreadyTranslated };
 }
 
+/**
+ * Which keys the code still calls for.
+ *
+ * `scanRepo` only sees strings that are *still hardcoded*, so it says nothing
+ * about a key that was extracted last month — that string is now `t('…')` and
+ * invisible to it. Without this, memory can never tell "deleted from the app"
+ * from "already done", so dead keys are re-translated forever and `--prune` has
+ * nothing to prune.
+ */
+export function scanKeyUsage(cwd: string, config: Config): Set<string> {
+  const files = walk(cwd, {
+    include: config.include,
+    exclude: [...config.exclude, `${config.messagesDir}/**`],
+    extensions: [...TEXT_EXT],
+  });
+
+  const used = new Set<string>();
+  for (const rel of files) {
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(cwd, rel), 'utf8');
+    } catch {
+      continue;
+    }
+    if (content.length > 400_000) continue;
+
+    // t('key'), $t("key"), i18n.t(`key`), intl.formatMessage({ id: 'key' })
+    for (const m of content.matchAll(/\b\$?t\s*\(\s*(["'`])([^"'`]+)\1/g)) used.add(m[2]!);
+    for (const m of content.matchAll(/\bid\s*:\s*(["'`])([^"'`]+)\1/g)) used.add(m[2]!);
+    // paraglide compiles keys to identifiers: m.common_ship_it()
+    for (const m of content.matchAll(/\bm\.([A-Za-z_$][\w$]*)\s*\(/g)) used.add(m[1]!);
+  }
+  return used;
+}
+
 // ---------------------------------------------------------------------------
 // Per-syntax scanners
 // ---------------------------------------------------------------------------
@@ -99,7 +134,10 @@ function scanJs(file: string, content: string, config: Config): ScannedString[] 
     if (stripped[m.index - 1] === '=') continue;
     out.push({
       file,
-      line: lineAt(stripped, m.index),
+      // The `>` and the words can sit on different lines. Report where the
+      // words are — that is the line the extractor rewrites and the line a
+      // human opens.
+      line: lineAt(stripped, m.index + 1 + leadingWhitespace(raw)),
       text,
       raw,
       kind: kindFromTag(precedingTag(stripped, m.index), text),
@@ -200,7 +238,7 @@ function scanMarkup(
     if (tag === 'script' || tag === 'style') continue;
     out.push({
       file,
-      line: lineAt(fullContent, offset + m.index),
+      line: lineAt(fullContent, offset + m.index + 1 + leadingWhitespace(m[1]!)),
       text,
       raw: m[1]!,
       kind: kindFromTag(tag, text),
@@ -280,6 +318,10 @@ export function blankOutComments(content: string): string {
   return content
     .replace(/\/\*[\s\S]*?\*\//g, (s) => s.replace(/[^\n]/g, ' '))
     .replace(/(^|[^:\\])\/\/[^\n]*/g, (s, p1) => p1 + ' '.repeat(s.length - p1.length));
+}
+
+function leadingWhitespace(text: string): number {
+  return text.length - text.trimStart().length;
 }
 
 export function lineAt(content: string, index: number): number {

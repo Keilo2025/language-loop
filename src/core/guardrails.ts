@@ -42,15 +42,23 @@ export function checkTranslations(units: TranslationUnit[], config: Config): Gua
 
     // 3. ICU syntax. An unbalanced brace throws at render time, not build time.
     if (!bracesBalanced(value)) push('icu-unbalanced', 'block', 'unbalanced { } — ICU will fail to parse this');
-    if (/\b(plural|select|selectordinal)\s*,/.test(value) && !/^\s*\{[\s\S]*\}\s*$/.test(value.trim()) && !value.includes('{')) {
-      push('icu-malformed', 'block', 'looks like an ICU message but is not wrapped in braces');
+    // The old form also required `!value.includes('{')`, which made the wrapping
+    // test unreachable — a message with braces could never be flagged, which is
+    // exactly the message this rule is for.
+    if (/\b(plural|select|selectordinal)\s*,/.test(value) && !/\{[^{}]*,\s*(plural|select|selectordinal)\s*,/.test(value)) {
+      push('icu-malformed', 'block', 'looks like an ICU message but the plural/select is not wrapped in braces');
     }
     const plurals = localeInfo(locale).plurals;
     if (/\bplural\s*,/.test(value)) {
       for (const category of plurals) {
-        if (category !== 'other' && !new RegExp(`\\b${category}\\s*\\{`).test(value) && !/=\d+\s*\{/.test(value)) {
-          push('plural-category-missing', 'flag', `${locale} uses the "${category}" plural category and this message does not cover it`);
-        }
+        if (category === 'other') continue;
+        // An explicit `=1{…}` covers the "one" category, but says nothing about
+        // "few" or "many". Only exempt the category the exact match stands in for.
+        if (new RegExp(`\\b${category}\\s*\\{`).test(value)) continue;
+        if (category === 'one' && /=1\s*\{/.test(value)) continue;
+        if (category === 'zero' && /=0\s*\{/.test(value)) continue;
+        if (category === 'two' && /=2\s*\{/.test(value)) continue;
+        push('plural-category-missing', 'flag', `${locale} uses the "${category}" plural category and this message does not cover it`);
       }
       if (!/\bother\s*\{/.test(value)) push('plural-other-missing', 'block', 'ICU plural without an "other" branch');
     }

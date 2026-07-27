@@ -140,47 +140,79 @@ export function applyExtraction(cwd: string, plan: ExtractPlan, config: Config, 
     }
 
     const lines = content.split('\n');
-    let changed = false;
+    // Held per file, not pushed straight into `applied`, because a file whose
+    // wiring cannot be worked out has to be abandoned whole — see below.
+    const fileApplied: Edit[] = [];
 
     // Work bottom-up so earlier line numbers stay valid.
     for (const edit of [...edits].sort((a, b) => b.line - a.line)) {
       const idx = edit.line - 1;
       const line = lines[idx];
-      if (line === undefined || !line.includes(edit.before)) {
-        // Line numbers drift when a file is edited between scan and extract.
-        // Refusing beats rewriting the wrong line.
+      // A JSX text node may open on one line and hold its words on the next, so
+      // the recorded line is a hint, not a promise. Fall back to the file when
+      // the hint misses, and only refuse when the text is nowhere at all.
+      if (line !== undefined && line.includes(edit.before)) {
+        const occurrences = line.split(edit.before).length - 1;
+        if (occurrences > 1 && edit.before.length < 4) {
+          skipped.push({ edit, reason: 'text appears more than once on the line and is too short to disambiguate' });
+          continue;
+        }
+        lines[idx] = line.replace(edit.before, edit.after);
+        fileApplied.push(edit);
+        continue;
+      }
+
+      const joined = lines.join('\n');
+      const occurrences = joined.split(edit.before).length - 1;
+      if (occurrences === 0) {
+        // Genuinely gone: the file changed between scan and extract. Refusing
+        // beats rewriting the wrong line.
         skipped.push({ edit, reason: 'source no longer matches — re-run scan' });
         continue;
       }
-      const occurrences = line.split(edit.before).length - 1;
-      if (occurrences > 1 && edit.before.length < 4) {
-        skipped.push({ edit, reason: 'text appears more than once on the line and is too short to disambiguate' });
+      if (occurrences > 1) {
+        skipped.push({
+          edit,
+          reason: 'text appears more than once in the file and cannot be pinned to one line — rewrite this one by hand',
+        });
         continue;
       }
-      lines[idx] = line.replace(edit.before, edit.after);
-      applied.push(edit);
-      changed = true;
+      const at = joined.indexOf(edit.before);
+      const rewritten = joined.slice(0, at) + edit.after + joined.slice(at + edit.before.length);
+      lines.length = 0;
+      lines.push(...rewritten.split('\n'));
+      fileApplied.push(edit);
     }
 
-    if (!changed) continue;
+    if (!fileApplied.length) continue;
 
     let next = lines.join('\n');
     const fileWiring = plan.wiring.filter((w) => w.file === file);
     if (fileWiring.length) {
       const wired = addWiring(next, fileWiring, config.runtime);
-      if (wired.ok) {
-        next = wired.content;
-        wiringAdded += wired.inserted;
-      } else {
+      if (!wired.ok) {
+        // Without the hook, every edit above references a `t` that does not
+        // exist. Writing the file would leave the project not compiling, which
+        // is strictly worse than leaving it alone and saying so. Drop the whole
+        // file's work rather than ship half of it.
+        for (const edit of fileApplied) {
+          skipped.push({ edit, reason: 'no recognisable component to hold the translation hook — file left untouched' });
+        }
         plan.openItems.push({
           file,
           line: 1,
           text: '(file wiring)',
-          reason: `could not find a component body to put "${fileWiring[0]!.statement}" in — add it by hand`,
+          reason:
+            `could not find a component body to put "${fileWiring[0]!.statement}" in, so this file was left ` +
+            'alone entirely — add the hook by hand and run extract again',
         });
+        continue;
       }
+      next = wired.content;
+      wiringAdded += wired.inserted;
     }
 
+    applied.push(...fileApplied);
     filesTouched.push(file);
     if (!dryRun) {
       backup.capture(file);
@@ -242,7 +274,7 @@ function addWiring(
   let inserted = 0;
 
   const importLine = wiring[0]!.import;
-  if (importLine && !next.includes(importLine.split(' from ')[0]!.replace('import ', '').trim())) {
+  if (importLine && !hasImport(next, importLine)) {
     const lastImport = [...next.matchAll(/^import\s.*?;?\s*$/gm)].pop();
     if (lastImport) {
       const at = lastImport.index! + lastImport[0].length;
@@ -257,25 +289,53 @@ function addWiring(
 
   for (const w of wiring) {
     if (!w.statement) continue;
-    if (next.includes(w.statement)) continue;
+    if (hasStatement(next, w.statement)) continue;
 
-    const patterns = w.component
+    const name = w.component ? escapeRe(w.component) : '';
+    // Bodied components: the hook goes just inside the opening brace.
+    const bodied = w.component
       ? [
-          new RegExp(`(function\\s+${w.component}\\s*\\([^)]*\\)\\s*(?::[^{]+)?\\{)`),
-          new RegExp(`(const\\s+${w.component}\\s*(?::[^=]+)?=\\s*(?:async\\s*)?\\([^)]*\\)\\s*(?::[^=]+)?=>\\s*\\{)`),
+          new RegExp(`(function\\s+${name}\\s*\\([^)]*\\)\\s*(?::[^{]+)?\\{)`),
+          new RegExp(`(const\\s+${name}\\s*(?::[^=]+)?=\\s*(?:async\\s*)?\\([^)]*\\)\\s*(?::[^=]+)?=>\\s*\\{)`),
         ]
       : [/(export\s+default\s+function\s+\w*\s*\([^)]*\)\s*\{)/, /(function\s+[A-Z]\w*\s*\([^)]*\)\s*\{)/];
 
     let done = false;
-    for (const re of patterns) {
+    for (const re of bodied) {
       const m = re.exec(next);
       if (!m) continue;
       const at = m.index + m[0].length;
-      const indent = '  ';
-      next = next.slice(0, at) + `\n${indent}${w.statement}` + next.slice(at);
+      next = next.slice(0, at) + `\n  ${w.statement}` + next.slice(at);
       inserted++;
       done = true;
       break;
+    }
+
+    // Concise arrow components — `const B = () => (<h1>…</h1>)` — have no body
+    // to put a hook in. They are far too common to hand back to a human, so
+    // give them one: turn the implicit return into an explicit one.
+    if (!done) {
+      const concise = w.component
+        ? [new RegExp(`const\\s+${name}\\s*(?::[^=]+)?=\\s*(?:async\\s*)?\\([^)]*\\)\\s*(?::[^=]+)?=>\\s*\\(`)]
+        : [
+            /export\s+default\s+(?:async\s*)?\([^)]*\)\s*=>\s*\(/,
+            /const\s+[A-Z]\w*\s*(?::[^=]+)?=\s*(?:async\s*)?\([^)]*\)\s*(?::[^=]+)?=>\s*\(/,
+          ];
+      for (const re of concise) {
+        const m = re.exec(next);
+        if (!m) continue;
+        const openParen = m.index + m[0].length - 1;
+        const closeParen = matchingParen(next, openParen);
+        if (closeParen === -1) continue;
+        const body = next.slice(openParen + 1, closeParen);
+        next =
+          next.slice(0, openParen) +
+          `{\n  ${w.statement}\n  return (${body});\n}` +
+          next.slice(closeParen + 1);
+        inserted++;
+        done = true;
+        break;
+      }
     }
     // A file whose hook is already in place needs nothing; a file where no
     // recognisable component could be found needs a human. Only the second is
@@ -284,4 +344,79 @@ function addWiring(
   }
 
   return { content: next, ok: true, inserted };
+}
+
+function escapeRe(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Is this import already here, however the author happened to write it?
+ *
+ * The old check compared the generated line's binding text verbatim, so
+ * `import {useTranslations}` did not match `import { useTranslations }` and a
+ * second, conflicting import was inserted. Compare what is imported and where
+ * from, not how it was spaced.
+ */
+function hasImport(content: string, importLine: string): boolean {
+  const from = /from\s*['"]([^'"]+)['"]/.exec(importLine);
+  const named = [...importLine.matchAll(/\{([^}]*)\}/g)].flatMap((m) =>
+    m[1]!.split(',').map((s) => s.trim().split(/\s+as\s+/)[0]!.trim()).filter(Boolean)
+  );
+  const defaultImport = /^import\s+([A-Za-z_$][\w$]*)\s*(?:,|from)/.exec(importLine)?.[1];
+  if (!from) return content.includes(importLine);
+
+  const source = escapeRe(from[1]!);
+  for (const binding of named) {
+    const re = new RegExp(`import[^;]*\\{[^}]*\\b${escapeRe(binding)}\\b[^}]*\\}[^;]*from\\s*['"]${source}['"]`);
+    if (re.test(content)) return true;
+  }
+  if (defaultImport) {
+    const re = new RegExp(`import\\s+${escapeRe(defaultImport)}\\b[^;]*from\\s*['"]${source}['"]`);
+    if (re.test(content)) return true;
+  }
+  return false;
+}
+
+/**
+ * Is this hook already declared, ignoring quote style and spacing?
+ *
+ * Same failure as the import: `useTranslations("c")` did not match the
+ * generated `useTranslations('c')`, so a second `const t` was declared and the
+ * file stopped compiling on a duplicate identifier.
+ */
+function hasStatement(content: string, statement: string): boolean {
+  if (content.includes(statement)) return true;
+  const m = /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?)\s*;?\s*$/.exec(statement);
+  if (!m) return false;
+  const binding = escapeRe(m[1]!);
+  const call = /([A-Za-z_$][\w$.]*)\s*\(\s*(?:['"]([^'"]*)['"])?\s*\)/.exec(m[2]!);
+  if (!call) return false;
+  const fn = escapeRe(call[1]!);
+  const arg = call[2] === undefined ? `\\s*` : `\\s*['"]${escapeRe(call[2])}['"]\\s*`;
+  return new RegExp(`(?:const|let|var)\\s+${binding}\\s*=\\s*${fn}\\s*\\(${arg}\\)`).test(content);
+}
+
+/** Index of the `)` that closes the `(` at `open`, or -1. Quote-aware. */
+function matchingParen(content: string, open: number): number {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = open; i < content.length; i++) {
+    const char = content[i]!;
+    if (quote) {
+      if (char === '\\') i++;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char;
+      continue;
+    }
+    if (char === '(') depth++;
+    else if (char === ')') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
 }

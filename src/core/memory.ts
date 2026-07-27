@@ -1,7 +1,8 @@
 import type { Config, KeyedString, Memory, MemoryEntry, TranslationStatus, WorkItem } from '../types.js';
 import { statePath } from './config.js';
 import { readCatalog, type Flat } from './catalog.js';
-import { readJson, sha, writeJson } from './util.js';
+import { leafOf } from './keys.js';
+import { readJsonPrecious, sha, writeJson } from './util.js';
 
 /**
  * What has already been translated, and what has changed since.
@@ -15,12 +16,22 @@ import { readJson, sha, writeJson } from './util.js';
 export const MEMORY_FILE = 'memory.json';
 
 export function loadMemory(cwd: string, sourceLocale: string): Memory {
-  return readJson<Memory>(statePath(cwd, MEMORY_FILE), {
+  const memory = readJsonPrecious<Memory>(statePath(cwd, MEMORY_FILE), {
     version: 1,
     sourceLocale,
     updatedAt: new Date().toISOString(),
     entries: {},
   });
+  // A file that parses but holds something other than a memory is still a file
+  // we must not overwrite — an empty `entries` here would mean the same silent
+  // erasure the strict read exists to prevent.
+  if (!memory.entries || typeof memory.entries !== 'object') {
+    throw new Error(
+      `${statePath(cwd, MEMORY_FILE)} parsed but has no "entries" object.\n` +
+        'Restore it from git, or delete it to start over and re-translate everything.'
+    );
+  }
+  return memory;
 }
 
 export function saveMemory(cwd: string, memory: Memory): void {
@@ -89,6 +100,38 @@ export function syncMemory(memory: Memory, strings: KeyedString[], config: Confi
 
   const disappeared = Object.keys(memory.entries).filter((k) => !seen.has(k));
   return { added, changed, unchanged, disappeared };
+}
+
+/**
+ * Keys memory holds that the code no longer asks for.
+ *
+ * "Not in this scan" is not the same as "gone": a key that was extracted last
+ * run is absent from the scan precisely *because* the loop did its job. Only a
+ * key that is neither still hardcoded nor called anywhere is actually dead.
+ */
+export function deadKeys(memory: Memory, config: Config, usedKeys: Set<string>, stillHardcoded: Set<string>): string[] {
+  const scoped = config.runtime === 'next-intl' || config.runtime === 'next-i18next' || config.runtime === 'react-i18next';
+  return Object.keys(memory.entries).filter((key) => {
+    if (stillHardcoded.has(key)) return false;
+    if (usedKeys.has(key)) return false;
+    // Namespaced hooks put only the leaf in the code, and paraglide mangles the
+    // key into an identifier. Both still count as the key being in use.
+    if (scoped && usedKeys.has(leafOf(key))) return false;
+    if (usedKeys.has(key.replace(/[.-]/g, '_'))) return false;
+    return true;
+  });
+}
+
+/** Forget keys the code no longer has. Returns what was dropped. */
+export function pruneMemory(memory: Memory, keys: string[]): string[] {
+  const dropped: string[] = [];
+  for (const key of keys) {
+    if (memory.entries[key]) {
+      delete memory.entries[key];
+      dropped.push(key);
+    }
+  }
+  return dropped;
 }
 
 /**
