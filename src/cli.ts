@@ -896,7 +896,8 @@ ${c.bold('the rest')}
 ${c.bold('flags')}
   --cwd <dir>        run somewhere other than here
   --dry-run          on extract and apply: show, do not write
-  --locales de,fr    limit translate to some languages
+  --locales de,fr    init: select locale codes (or "all"); translate: limit locales
+  --regions europe   init: select all common locales in comma-separated regions
   --llm              translate without an agent, using ANTHROPIC_API_KEY or OPENAI_API_KEY
   --ui / --collect   canvas review, or read your ticks back out of review.md
   --prune            on extract: forget memory keys the code no longer calls

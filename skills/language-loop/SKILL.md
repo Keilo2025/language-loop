@@ -33,11 +33,19 @@ npx language-loop extract    # move it into keys, wire the hook
 npx language-loop translate  # writes .language-loop/brief.md — then stops
 npx language-loop review     # a human approves (--ui for a canvas)
 npx language-loop apply      # write the catalogues
+npx language-loop audit      # read-only completeness report and ordered fixes
 ```
 
 If there is no `language-loop.config.json`, run `npx language-loop init` first. It asks
 which agent the user codes in and which languages they want, and it needs a real terminal.
-If you cannot give it one, pass the answers: `init --locales de,fr,ja --agents claude`.
+Setup supports popular locales, whole regions, all common modern written locales, and custom
+BCP-47 codes. If you cannot give it a terminal, pass the answers:
+
+```
+init --source en-US --locales all --agents cursor
+init --source en-US --regions europe,americas --agents cursor
+init --source en-US --locales fr-CA,de-DE,ja-JP --agents cursor
+```
 
 ## Your job is step three
 
@@ -67,6 +75,9 @@ only if you use the advantage you have, which is that you can read the code:
 6. **Write a `note` whenever you made a call.** Shortened a button, chose informal address,
    refused to translate an idiom literally — say so. The reviewer usually does not speak the
    language and is reading your reasoning, not your grammar.
+7. **Write like a native product team.** Translate intent, not word order. Avoid textbook,
+   bureaucratic or needlessly formal prose, and use the selected audience locale's vocabulary
+   and spelling.
 
 Write `.language-loop/translations.json` exactly as the brief specifies, then stop and hand
 over to `review`.
@@ -102,6 +113,14 @@ over to `review`.
 
 `status` is the honest summary: coverage per language, how much is stale, how much is still
 hardcoded. Run it at the end and tell the user in plain prose.
+
+`audit` is the read-only completeness report. It combines hardcoded text, refused extraction
+items, missing/stale/pending translations, catalogue integrity, suspicious source copies and
+orphans, then prints one dependency-ordered list of fixes. Report those suggestions; never
+execute them during an audit.
+
+Language switcher creation and placement are outside this skill. The loop completes and
+validates the strings and catalogues that a switcher uses.
 
 ## Reference
 
