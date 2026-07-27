@@ -23,9 +23,15 @@ import { detectMarketingLoop, frozenTexts, marketingLoopPitch } from './core/mar
 import { AGENTS, detectAgents, installAgents, uninstallAgents } from './core/install.js';
 import { wireRuntime } from './core/wire.js';
 import { revertLast } from './core/backup.js';
-import { LOCALES, POPULAR, localeInfo } from './core/locales.js';
+import {
+  COMMON_LOCALES, REGIONS, canonicalLocaleCode, localeInfo, localesForRegions,
+  type LocaleRegion,
+} from './core/locales.js';
+import { resolveLocaleSelection } from './core/locale-selection.js';
 import { Prompt, isInteractive } from './core/prompt.js';
 import { c, heading, nextStep, reportScan, reportStats } from './core/report.js';
+import { renderCompletenessReport } from './core/report.js';
+import { analyzeCompleteness } from './core/completeness.js';
 import { exists, readJson, truncate, writeJson } from './core/util.js';
 import { readCatalog, missingKeys, orphanKeys } from './core/catalog.js';
 import { estimateBatch, translateWithLlm } from './core/llm.js';
@@ -47,6 +53,16 @@ function valueOf(name: string): string | undefined {
 function listOf(name: string): string[] {
   const raw = valueOf(name);
   return raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : [];
+}
+
+function commonLocaleChoices(tier: 'popular' | 'common', sourceLocale: string) {
+  return COMMON_LOCALES
+    .filter((locale) => locale.tier === tier && locale.code !== sourceLocale)
+    .map((locale) => ({
+      value: locale.code,
+      label: `${locale.code.padEnd(12)} ${locale.english}`,
+      hint: locale.nativeName,
+    }));
 }
 
 function nextCommand(config: Config, stage: string): string {
@@ -72,6 +88,7 @@ async function main(): Promise<void> {
     case 'apply': return cmdApply();
     case 'status': return cmdStatus();
     case 'doctor': return cmdDoctor();
+    case 'audit': return cmdAudit();
     case 'revert': return cmdRevert();
     case 'sync-marketing': return cmdSyncMarketing();
     case 'help':
@@ -101,13 +118,32 @@ async function cmdInit(): Promise<void> {
     // re-run in CI without --agents used to unwire every agent, and without
     // --source used to reset sourceLocale to 'en' — silently, on a project
     // whose English was actually German.
-    if (valueOf('--locales') !== undefined) config.locales = listOf('--locales');
-    if (valueOf('--source') !== undefined) config.sourceLocale = valueOf('--source')!;
+    const localeArg = valueOf('--locales');
+    const regionArgs = listOf('--regions');
+    if (localeArg !== undefined && regionArgs.length) {
+      throw new Error('Use either --locales or --regions, not both.');
+    }
+    if (valueOf('--source') !== undefined) config.sourceLocale = canonicalLocaleCode(valueOf('--source')!);
+    if (localeArg !== undefined) {
+      config.locales = resolveLocaleSelection({
+        sourceLocale: config.sourceLocale,
+        mode: localeArg.trim().toLowerCase() === 'all' ? 'all' : 'custom',
+        codes: localeArg.trim().toLowerCase() === 'all' ? undefined : listOf('--locales'),
+      });
+    } else if (regionArgs.length) {
+      config.locales = resolveLocaleSelection({
+        sourceLocale: config.sourceLocale,
+        mode: 'regions',
+        regions: regionArgs,
+      });
+    }
     if (valueOf('--agents') !== undefined) config.agents = listOf('--agents');
     if (!config.locales.length) {
-      throw new Error('Not a TTY, so init needs --locales, e.g.  npx language-loop init --locales de,fr,ja --agents claude');
+      throw new Error(
+        'Not a TTY, so init needs --locales or --regions, e.g.  ' +
+        'npx language-loop init --source en-US --regions europe,americas --agents cursor'
+      );
     }
-    if (!config.locales.includes(config.sourceLocale)) config.locales.unshift(config.sourceLocale);
     finishInit(config, detection.runtimeInstalled);
     return;
   }
@@ -144,21 +180,70 @@ async function cmdInit(): Promise<void> {
     )) as Config['runtime'];
 
     // 3. Languages.
-    config.sourceLocale = await prompt.text('\nWhat language is the code written in?', 'en');
-    const localeChoices = [
-      ...POPULAR.map((code) => ({ value: code, label: `${code.padEnd(6)} ${localeInfo(code).english}`, hint: localeInfo(code).name })),
-      ...LOCALES.filter((l) => !POPULAR.includes(l.code) && l.code !== config.sourceLocale).map((l) => ({
-        value: l.code,
-        label: `${l.code.padEnd(6)} ${l.english}`,
-        hint: l.name,
-      })),
-    ];
-    config.locales = await prompt.multi(
-      'Which languages do you want to ship in?',
-      localeChoices,
-      'numbers or codes, comma separated — any BCP-47 code works even if it is not listed'
+    config.sourceLocale = canonicalLocaleCode(
+      await prompt.text('\nWhat audience locale is the code written in?', 'en-US')
     );
-    if (!config.locales.includes(config.sourceLocale)) config.locales.unshift(config.sourceLocale);
+    const selectionMode = await prompt.pick(
+      '\nHow do you want to choose the languages to ship?',
+      [
+        { value: 'popular', label: 'Popular languages', hint: 'pick individual audience locales' },
+        { value: 'regions', label: 'By region', hint: 'Africa, Americas, Asia, Europe, Middle East, Oceania' },
+        { value: 'all', label: 'All common languages', hint: `${COMMON_LOCALES.length} modern written locales` },
+        { value: 'custom', label: 'Enter locale codes', hint: 'any valid BCP-47 code' },
+      ],
+      'popular'
+    );
+
+    let selectedCodes: string[];
+    if (selectionMode === 'regions') {
+      const selectedRegions = await prompt.multi(
+        'Which regions do you want to support?',
+        REGIONS.map((region) => ({ value: region.code, label: region.label })),
+        'numbers or region names, comma separated'
+      );
+      const regionalLocales = localesForRegions(selectedRegions as LocaleRegion[]);
+      selectedCodes = await prompt.multi(
+        `${regionalLocales.length} common locale(s) are used in those regions. Press Enter to keep all, or refine:`,
+        regionalLocales
+          .filter((locale) => locale.code !== config.sourceLocale)
+          .map((locale) => ({
+            value: locale.code,
+            label: `${locale.code.padEnd(12)} ${locale.english}`,
+            hint: locale.nativeName,
+            preselected: true,
+          })),
+        'Enter keeps all; otherwise use numbers or locale codes'
+      );
+    } else if (selectionMode === 'all') {
+      const confirmed = await prompt.confirm(
+        `Add all ${COMMON_LOCALES.length} common modern locales? This creates a large translation backlog.`,
+        false
+      );
+      if (!confirmed) {
+        selectedCodes = await prompt.multi(
+          'Choose popular audience locales instead:',
+          commonLocaleChoices('popular', config.sourceLocale)
+        );
+      } else {
+        selectedCodes = COMMON_LOCALES.map((locale) => locale.code);
+      }
+    } else if (selectionMode === 'custom') {
+      const entered = await prompt.text(
+        'Enter BCP-47 locale codes, comma separated (for example fr-CA,de-DE,ja-JP):'
+      );
+      selectedCodes = entered.split(',').map((code) => code.trim()).filter(Boolean);
+    } else {
+      selectedCodes = await prompt.multi(
+        'Which popular audience locales do you want to ship?',
+        commonLocaleChoices('popular', config.sourceLocale),
+        'numbers or locale codes, comma separated'
+      );
+    }
+    config.locales = resolveLocaleSelection({
+      sourceLocale: config.sourceLocale,
+      mode: 'custom',
+      codes: selectedCodes,
+    });
 
     // 4. Formality — the decision people forget until a German user complains.
     const formalityLangs = config.locales.filter((l) => l !== config.sourceLocale && localeInfo(l).formalityMatters);
@@ -730,6 +815,11 @@ function cmdDoctor(): void {
   console.log(problems ? c.yellow(`${problems} problem(s) worth fixing.`) : c.green('Nothing broken.'));
 }
 
+function cmdAudit(): void {
+  const config = requireConfig(cwd);
+  renderCompletenessReport(analyzeCompleteness(cwd, config), config);
+}
+
 function cmdRevert(): void {
   const result = revertLast(cwd);
   if (!result) {
@@ -798,6 +888,7 @@ ${c.bold('the loop')}
 ${c.bold('the rest')}
   npx language-loop status           coverage per language, what is stale
   npx language-loop doctor           broken placeholders, missing keys, wrong setup
+  npx language-loop audit            read-only completeness report with next steps
   npx language-loop revert           undo the last run
   npx language-loop sync-marketing   check the marketing-loop handshake
   npx language-loop uninstall        remove the agent rules
@@ -805,7 +896,8 @@ ${c.bold('the rest')}
 ${c.bold('flags')}
   --cwd <dir>        run somewhere other than here
   --dry-run          on extract and apply: show, do not write
-  --locales de,fr    limit translate to some languages
+  --locales de,fr    init: select locale codes (or "all"); translate: limit locales
+  --regions europe   init: select all common locales in comma-separated regions
   --llm              translate without an agent, using ANTHROPIC_API_KEY or OPENAI_API_KEY
   --ui / --collect   canvas review, or read your ticks back out of review.md
   --prune            on extract: forget memory keys the code no longer calls

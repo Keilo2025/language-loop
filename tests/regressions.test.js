@@ -69,6 +69,56 @@ test('Cursor users are sent to the slash command after extraction', () => {
   assert.doesNotMatch(run.stdout, /npx language-loop translate/);
 });
 
+test('non-interactive init can select all common audience locales', () => {
+  const dir = project({});
+  const run = spawnSync(process.execPath, [
+    'dist/cli.js', 'init', '--cwd', dir,
+    '--source', 'en-US', '--locales', 'all', '--agents', 'cursor',
+  ], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, 'language-loop.config.json'), 'utf8'));
+  assert.equal(saved.sourceLocale, 'en-US');
+  assert.ok(saved.locales.length >= 80);
+  assert.equal(new Set(saved.locales).size, saved.locales.length);
+  assert.ok(saved.locales.includes('pt-BR'));
+  assert.ok(saved.locales.includes('pt-PT'));
+});
+
+test('non-interactive init can select common locales by region', () => {
+  const dir = project({});
+  const run = spawnSync(process.execPath, [
+    'dist/cli.js', 'init', '--cwd', dir,
+    '--source', 'en-US', '--regions', 'europe,americas', '--agents', 'cursor',
+  ], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, 'language-loop.config.json'), 'utf8'));
+  assert.ok(saved.locales.includes('en-GB'));
+  assert.ok(saved.locales.includes('es-419'));
+  assert.ok(!saved.locales.includes('ja-JP'));
+});
+
+test('non-interactive init explains invalid region names', () => {
+  const dir = project({});
+  const run = spawnSync(process.execPath, [
+    'dist/cli.js', 'init', '--cwd', dir,
+    '--source', 'en-US', '--regions', 'moon', '--agents', 'cursor',
+  ], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /africa, americas, asia, europe, middle-east, oceania/);
+});
+
 // --- bug 4: multi-line JSX text ---------------------------------------------
 
 test('a JSX text node whose words are on the next line is still extracted', () => {

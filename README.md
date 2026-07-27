@@ -15,7 +15,21 @@ npx language-loop extract     # turn them into keys and wire up the runtime
 npx language-loop translate   # brief your agent on what actually needs doing
 npx language-loop review --ui # a human approves, on a canvas
 npx language-loop apply       # write the catalogues
+npx language-loop audit       # read-only completeness report and ordered fixes
 ```
+
+During `init`, choose popular audience locales, select whole regions, add all 102 common
+modern written locales, or enter custom BCP-47 codes. Noninteractive setup supports the same
+paths:
+
+```bash
+npx language-loop init --source en-US --locales all --agents cursor
+npx language-loop init --source en-US --regions europe,americas --agents cursor
+npx language-loop init --source en-US --locales fr-CA,de-DE,ja-JP --agents cursor
+```
+
+`all` means the checked-in practical catalogue of common modern written locales—not every
+historical or obscure ISO language.
 
 ---
 
@@ -290,7 +304,7 @@ Agents with invokable commands get three:
 | command | what it does |
 | --- | --- |
 | `/language-loop` | run the whole loop, agent does the translating |
-| `/i18n-audit` | report what is hardcoded and how stale each language is, no changes |
+| `/i18n-audit` | read-only completeness report with ordered fix suggestions |
 | `/i18n-review` | open the approval canvas |
 
 | agent | command directory |
@@ -383,8 +397,8 @@ marketing-loop — the freeze simply never engages.
 
 ```json
 {
-  "sourceLocale": "en",
-  "locales": ["en", "de", "fr", "ja", "ar"],
+  "sourceLocale": "en-US",
+  "locales": ["en-US", "de-DE", "fr-CA", "ja-JP", "ar-001"],
   "runtime": "next-intl",
   "messagesDir": "messages",
   "layout": "single-file",
@@ -409,6 +423,13 @@ marketing-loop — the freeze simply never engages.
   "maxBatch": 200
 }
 ```
+
+Locale choices represent real product audiences where written usage differs: `en-US` and
+`en-GB`, `pt-BR` and `pt-PT`, `es-419` and `es-ES`, or Simplified and Traditional Chinese.
+Custom valid BCP-47 locales remain supported.
+
+`language-loop` analyzes and completes the strings and catalogues behind a language switcher.
+It intentionally does not create, style, or place the switcher itself.
 
 **`formality` is the setting people wish they had thought about.** German `du` and `Sie`,
 French `tu` and `vous`, Spanish `tú` and `usted` — pick one per product and hold it. Mixed
@@ -451,7 +472,8 @@ because it is a design decision rather than a string one.
 import {
   scanRepo, assignKeys, planExtraction, applyExtraction,
   loadMemory, syncMemory, pendingWork, writeBrief,
-  checkTranslations, applyDecisions, loadConfig,
+  checkTranslations, applyDecisions, loadConfig, analyzeCompleteness,
+  COMMON_LOCALES, localesForRegions,
 } from 'language-loop';
 
 const config = loadConfig(process.cwd());

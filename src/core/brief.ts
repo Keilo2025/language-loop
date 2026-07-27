@@ -81,9 +81,10 @@ export function writeBrief(cwd: string, input: BriefInput): { file: string; unit
   lines.push('3. **Respect the kind.** A `cta` is a button: the words have to fit. A `heading` can breathe.');
   lines.push('   An `error` explains what to do next, not what went wrong internally. An `aria` label is read');
   lines.push('   aloud and should be a sentence, not a fragment.');
-  lines.push('4. **Translate the intent, not the words.** Idioms travel badly. "Get started free" is not a');
-  lines.push('   sentence about starting; it is a button that means "begin, at no cost". Write what a native');
-  lines.push('   speaker would put on that button.');
+  lines.push('4. **Translate the intent, not the words.** Write what a native user would expect in a modern app.');
+  lines.push('   Avoid textbook, bureaucratic, or overly formal language unless this product explicitly calls');
+  lines.push('   for it. "Get started free" means "begin, at no cost"; write the button a native product team');
+  lines.push('   would ship, using the selected audience locale\'s vocabulary and spelling.');
   lines.push('5. **Open the file when you are unsure.** Each item names the file it came from. If the string is');
   lines.push('   ambiguous — "Close" the verb or "Close" the adjective — go and look.');
   lines.push('');
@@ -97,6 +98,7 @@ export function writeBrief(cwd: string, input: BriefInput): { file: string; unit
     const notes: string[] = [];
     if (info.rtl) notes.push('right-to-left');
     if (info.formalityMatters) notes.push('formality decision required');
+    if (info.translationGuidance) notes.push(info.translationGuidance);
     if (info.expansion >= 1.25) notes.push(`runs ~${Math.round((info.expansion - 1) * 100)}% longer than English — keep buttons tight`);
     if (info.expansion <= 0.7) notes.push('runs much shorter than English');
     lines.push(`| \`${locale}\` | ${info.english} | ${info.plurals.join(', ')} | ${info.rtl ? 'RTL' : 'LTR'} | ${notes.join('; ') || '—'} |`);
