@@ -1,71 +1,161 @@
-/**
- * The language list offered at init, plus the facts about each locale that
- * change how a translation has to be written or reviewed.
- */
+import {
+  POPULAR_LOCALE_CODES,
+  REGIONS,
+  REGION_LOCALE_CODES,
+  TRANSLATION_GUIDANCE,
+  type LocaleRegion,
+} from './locale-catalog.js';
 
+/**
+ * The common audience locales offered during setup, plus the linguistic facts
+ * that change how a translation has to be written or reviewed.
+ */
 export interface LocaleInfo {
   code: string;
   name: string;
   english: string;
-  /** Right-to-left script. The UI needs dir="rtl", not just words. */
   rtl: boolean;
-  /** Roughly how much longer than English this language runs, in characters. */
   expansion: number;
-  /** Languages where the T-V distinction forces a formality decision. */
   formalityMatters: boolean;
-  /** CLDR plural categories in use. More than two means ICU plural is mandatory. */
   plurals: string[];
 }
 
-export const LOCALES: LocaleInfo[] = [
-  { code: 'en', name: 'English', english: 'English', rtl: false, expansion: 1.0, formalityMatters: false, plurals: ['one', 'other'] },
-  { code: 'de', name: 'Deutsch', english: 'German', rtl: false, expansion: 1.3, formalityMatters: true, plurals: ['one', 'other'] },
-  { code: 'fr', name: 'Français', english: 'French', rtl: false, expansion: 1.25, formalityMatters: true, plurals: ['one', 'many', 'other'] },
-  { code: 'es', name: 'Español', english: 'Spanish', rtl: false, expansion: 1.25, formalityMatters: true, plurals: ['one', 'many', 'other'] },
-  { code: 'pt', name: 'Português', english: 'Portuguese', rtl: false, expansion: 1.25, formalityMatters: true, plurals: ['one', 'many', 'other'] },
-  { code: 'pt-BR', name: 'Português (Brasil)', english: 'Portuguese (Brazil)', rtl: false, expansion: 1.25, formalityMatters: true, plurals: ['one', 'many', 'other'] },
-  { code: 'it', name: 'Italiano', english: 'Italian', rtl: false, expansion: 1.2, formalityMatters: true, plurals: ['one', 'many', 'other'] },
-  { code: 'nl', name: 'Nederlands', english: 'Dutch', rtl: false, expansion: 1.25, formalityMatters: true, plurals: ['one', 'other'] },
-  { code: 'pl', name: 'Polski', english: 'Polish', rtl: false, expansion: 1.3, formalityMatters: true, plurals: ['one', 'few', 'many', 'other'] },
-  { code: 'ru', name: 'Русский', english: 'Russian', rtl: false, expansion: 1.2, formalityMatters: true, plurals: ['one', 'few', 'many', 'other'] },
-  { code: 'uk', name: 'Українська', english: 'Ukrainian', rtl: false, expansion: 1.2, formalityMatters: true, plurals: ['one', 'few', 'many', 'other'] },
-  { code: 'cs', name: 'Čeština', english: 'Czech', rtl: false, expansion: 1.15, formalityMatters: true, plurals: ['one', 'few', 'many', 'other'] },
-  { code: 'sv', name: 'Svenska', english: 'Swedish', rtl: false, expansion: 1.1, formalityMatters: false, plurals: ['one', 'other'] },
-  { code: 'da', name: 'Dansk', english: 'Danish', rtl: false, expansion: 1.1, formalityMatters: false, plurals: ['one', 'other'] },
-  { code: 'no', name: 'Norsk', english: 'Norwegian', rtl: false, expansion: 1.1, formalityMatters: false, plurals: ['one', 'other'] },
-  { code: 'fi', name: 'Suomi', english: 'Finnish', rtl: false, expansion: 1.3, formalityMatters: false, plurals: ['one', 'other'] },
-  { code: 'tr', name: 'Türkçe', english: 'Turkish', rtl: false, expansion: 1.1, formalityMatters: true, plurals: ['one', 'other'] },
-  { code: 'ja', name: '日本語', english: 'Japanese', rtl: false, expansion: 0.6, formalityMatters: true, plurals: ['other'] },
-  { code: 'ko', name: '한국어', english: 'Korean', rtl: false, expansion: 0.7, formalityMatters: true, plurals: ['other'] },
-  { code: 'zh-CN', name: '简体中文', english: 'Chinese (Simplified)', rtl: false, expansion: 0.4, formalityMatters: false, plurals: ['other'] },
-  { code: 'zh-TW', name: '繁體中文', english: 'Chinese (Traditional)', rtl: false, expansion: 0.4, formalityMatters: false, plurals: ['other'] },
-  { code: 'ar', name: 'العربية', english: 'Arabic', rtl: true, expansion: 1.25, formalityMatters: false, plurals: ['zero', 'one', 'two', 'few', 'many', 'other'] },
-  { code: 'he', name: 'עברית', english: 'Hebrew', rtl: true, expansion: 1.0, formalityMatters: false, plurals: ['one', 'two', 'many', 'other'] },
-  { code: 'fa', name: 'فارسی', english: 'Persian', rtl: true, expansion: 1.2, formalityMatters: true, plurals: ['one', 'other'] },
-  { code: 'hi', name: 'हिन्दी', english: 'Hindi', rtl: false, expansion: 1.2, formalityMatters: true, plurals: ['one', 'other'] },
-  { code: 'id', name: 'Bahasa Indonesia', english: 'Indonesian', rtl: false, expansion: 1.2, formalityMatters: false, plurals: ['other'] },
-  { code: 'th', name: 'ไทย', english: 'Thai', rtl: false, expansion: 1.0, formalityMatters: true, plurals: ['other'] },
-  { code: 'vi', name: 'Tiếng Việt', english: 'Vietnamese', rtl: false, expansion: 1.2, formalityMatters: true, plurals: ['other'] },
-  { code: 'el', name: 'Ελληνικά', english: 'Greek', rtl: false, expansion: 1.2, formalityMatters: true, plurals: ['one', 'other'] },
-  { code: 'ro', name: 'Română', english: 'Romanian', rtl: false, expansion: 1.25, formalityMatters: true, plurals: ['one', 'few', 'other'] },
-  { code: 'hu', name: 'Magyar', english: 'Hungarian', rtl: false, expansion: 1.25, formalityMatters: true, plurals: ['one', 'other'] },
-];
+export interface CommonLocale extends LocaleInfo {
+  nativeName: string;
+  regions: LocaleRegion[];
+  tier: 'popular' | 'common';
+  translationGuidance?: string;
+}
 
-const BY_CODE = new Map(LOCALES.map((l) => [l.code.toLowerCase(), l]));
+export type { LocaleRegion };
+export { REGIONS };
 
-export function localeInfo(code: string): LocaleInfo {
-  const hit = BY_CODE.get(code.toLowerCase());
-  if (hit) return hit;
-  // Fall back to the base language of a regional tag: pt-PT -> pt.
-  const base = code.split('-')[0]!.toLowerCase();
-  const baseHit = BY_CODE.get(base);
-  if (baseHit) return { ...baseHit, code, name: code, english: code };
-  return { code, name: code, english: code, rtl: false, expansion: 1.2, formalityMatters: false, plurals: ['one', 'other'] };
+const RTL_LANGUAGES = new Set(['ar', 'ckb', 'fa', 'he', 'ps', 'ur']);
+const FORMALITY_LANGUAGES = new Set([
+  'af', 'ar', 'bg', 'ca', 'cs', 'de', 'el', 'es', 'fa', 'fr', 'hi', 'hr',
+  'hu', 'it', 'ja', 'ko', 'nl', 'pl', 'pt', 'ro', 'ru', 'sk', 'sl', 'sr',
+  'th', 'tr', 'uk', 'vi', 'zh',
+]);
+
+const EXPANSION: Record<string, number> = {
+  de: 1.3, fr: 1.25, es: 1.25, pt: 1.25, it: 1.2, nl: 1.25,
+  pl: 1.3, ru: 1.2, uk: 1.2, cs: 1.15, sv: 1.1, da: 1.1,
+  nb: 1.1, fi: 1.3, tr: 1.1, ja: 0.6, ko: 0.7, zh: 0.4,
+  ar: 1.25, he: 1.0, fa: 1.2, hi: 1.2, id: 1.2, th: 1.0,
+  vi: 1.2, el: 1.2, ro: 1.25, hu: 1.25,
+};
+
+const popular = new Set<string>(POPULAR_LOCALE_CODES);
+const englishNames = new Intl.DisplayNames(['en'], { type: 'language' });
+
+export function canonicalLocaleCode(code: string): string {
+  try {
+    const canonical = Intl.getCanonicalLocales(code.trim())[0];
+    if (!canonical) throw new Error();
+    return canonical;
+  } catch {
+    throw new Error(`Invalid locale code: ${code}`);
+  }
+}
+
+function language(code: string): string {
+  return new Intl.Locale(code).language;
+}
+
+function displayName(code: string, displayLocale: string): string {
+  try {
+    return new Intl.DisplayNames([displayLocale], { type: 'language' }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+function profile(code: string): Omit<LocaleInfo, 'code' | 'name' | 'english'> {
+  const base = language(code);
+  return {
+    rtl: RTL_LANGUAGES.has(base),
+    expansion: EXPANSION[base] ?? 1.2,
+    formalityMatters: FORMALITY_LANGUAGES.has(base),
+    plurals: [...new Intl.PluralRules(code).resolvedOptions().pluralCategories],
+  };
+}
+
+const regionsByCode = new Map<string, LocaleRegion[]>();
+for (const region of REGIONS) {
+  for (const rawCode of REGION_LOCALE_CODES[region.code]) {
+    const code = canonicalLocaleCode(rawCode);
+    const regions = regionsByCode.get(code) ?? [];
+    if (!regions.includes(region.code)) regions.push(region.code);
+    regionsByCode.set(code, regions);
+  }
+}
+
+export const COMMON_LOCALES: CommonLocale[] = [...regionsByCode].map(([code, regions]) => {
+  const nativeName = displayName(code, code);
+  return {
+    code,
+    name: nativeName,
+    nativeName,
+    english: englishNames.of(code) ?? code,
+    regions,
+    tier: popular.has(code) ? 'popular' as const : 'common' as const,
+    translationGuidance: TRANSLATION_GUIDANCE[code],
+    ...profile(code),
+  };
+}).sort((a, b) => {
+  if (a.tier !== b.tier) return a.tier === 'popular' ? -1 : 1;
+  return a.english.localeCompare(b.english) || a.code.localeCompare(b.code);
+});
+
+const BY_CODE = new Map(COMMON_LOCALES.map((locale) => [locale.code.toLowerCase(), locale]));
+
+/** Backward-compatible name for programmatic consumers. */
+export const LOCALES: LocaleInfo[] = COMMON_LOCALES;
+export const POPULAR = COMMON_LOCALES.filter((locale) => locale.tier === 'popular').map((locale) => locale.code);
+
+export function allCommonLocaleCodes(): string[] {
+  return COMMON_LOCALES.map((locale) => locale.code);
+}
+
+export function localesForRegions(regions: LocaleRegion[]): CommonLocale[] {
+  const selected = new Set(regions);
+  return COMMON_LOCALES.filter((locale) => locale.regions.some((region) => selected.has(region)));
+}
+
+export function localeInfo(rawCode: string): LocaleInfo {
+  let code: string;
+  try {
+    code = canonicalLocaleCode(rawCode);
+  } catch {
+    return {
+      code: rawCode,
+      name: rawCode,
+      english: rawCode,
+      rtl: false,
+      expansion: 1.2,
+      formalityMatters: false,
+      plurals: ['one', 'other'],
+    };
+  }
+
+  const exact = BY_CODE.get(code.toLowerCase());
+  if (exact) return exact;
+
+  const base = language(code);
+  const baseProfile = COMMON_LOCALES.find((locale) => language(locale.code) === base);
+  return {
+    code,
+    name: displayName(code, code),
+    english: englishNames.of(code) ?? code,
+    ...(baseProfile ? {
+      rtl: baseProfile.rtl,
+      expansion: baseProfile.expansion,
+      formalityMatters: baseProfile.formalityMatters,
+      plurals: [...new Intl.PluralRules(code).resolvedOptions().pluralCategories],
+    } : profile(code)),
+  };
 }
 
 export function isRtl(code: string): boolean {
   return localeInfo(code).rtl;
 }
-
-/** The dozen most people actually pick, shown first at init. */
-export const POPULAR = ['de', 'fr', 'es', 'pt-BR', 'it', 'nl', 'ja', 'zh-CN', 'ko', 'ar', 'pl', 'tr'];

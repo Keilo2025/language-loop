@@ -32,5 +32,9 @@ export { detectMarketingLoop, marketingLoopPitch, frozenTexts } from './core/mar
 export { installAgents, uninstallAgents, detectAgents, AGENTS } from './core/install.js';
 export { wireRuntime } from './core/wire.js';
 export { revertLast, Backup } from './core/backup.js';
-export { LOCALES, POPULAR, localeInfo, isRtl } from './core/locales.js';
+export {
+  LOCALES, POPULAR, COMMON_LOCALES, REGIONS, localeInfo, isRtl,
+  canonicalLocaleCode, allCommonLocaleCodes, localesForRegions,
+} from './core/locales.js';
+export type { CommonLocale, LocaleRegion, LocaleInfo } from './core/locales.js';
 export { translateWithLlm } from './core/llm.js';
