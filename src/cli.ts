@@ -30,6 +30,8 @@ import {
 import { resolveLocaleSelection } from './core/locale-selection.js';
 import { Prompt, isInteractive } from './core/prompt.js';
 import { c, heading, nextStep, reportScan, reportStats } from './core/report.js';
+import { renderCompletenessReport } from './core/report.js';
+import { analyzeCompleteness } from './core/completeness.js';
 import { exists, readJson, truncate, writeJson } from './core/util.js';
 import { readCatalog, missingKeys, orphanKeys } from './core/catalog.js';
 import { estimateBatch, translateWithLlm } from './core/llm.js';
@@ -86,6 +88,7 @@ async function main(): Promise<void> {
     case 'apply': return cmdApply();
     case 'status': return cmdStatus();
     case 'doctor': return cmdDoctor();
+    case 'audit': return cmdAudit();
     case 'revert': return cmdRevert();
     case 'sync-marketing': return cmdSyncMarketing();
     case 'help':
@@ -812,6 +815,11 @@ function cmdDoctor(): void {
   console.log(problems ? c.yellow(`${problems} problem(s) worth fixing.`) : c.green('Nothing broken.'));
 }
 
+function cmdAudit(): void {
+  const config = requireConfig(cwd);
+  renderCompletenessReport(analyzeCompleteness(cwd, config), config);
+}
+
 function cmdRevert(): void {
   const result = revertLast(cwd);
   if (!result) {
@@ -880,6 +888,7 @@ ${c.bold('the loop')}
 ${c.bold('the rest')}
   npx language-loop status           coverage per language, what is stale
   npx language-loop doctor           broken placeholders, missing keys, wrong setup
+  npx language-loop audit            read-only completeness report with next steps
   npx language-loop revert           undo the last run
   npx language-loop sync-marketing   check the marketing-loop handshake
   npx language-loop uninstall        remove the agent rules

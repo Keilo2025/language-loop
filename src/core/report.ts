@@ -1,4 +1,5 @@
 import type { Config } from '../types.js';
+import type { CompletenessReport, SuggestedAction } from './completeness.js';
 import type { MemoryStats } from './memory.js';
 import type { ScanResult } from './scan.js';
 import { localeInfo } from './locales.js';
@@ -88,4 +89,80 @@ export function nextStep(lines: string[]): void {
   console.log(c.dim('next'));
   for (const line of lines) console.log(`  ${line}`);
   console.log('');
+}
+
+export function commandForAction(config: Config, action: SuggestedAction): string {
+  const cursor = config.agents.includes('cursor');
+  if (action === 'manual-extract') return 'Open the named files and move those strings into a shared translation helper or message map.';
+  if (cursor) {
+    if (action === 'review') return '/i18n-review';
+    const stage: Record<Exclude<SuggestedAction, 'manual-extract' | 'review'>, string> = {
+      extract: 'extract',
+      setup: 'init',
+      translate: 'translate',
+      retranslate: 'translate',
+      apply: 'apply',
+      prune: 'extract --prune',
+    };
+    return `/language-loop ${stage[action]}`;
+  }
+
+  const stage: Record<Exclude<SuggestedAction, 'manual-extract'>, string> = {
+    extract: 'extract',
+    setup: 'init',
+    translate: 'translate',
+    retranslate: 'translate',
+    review: 'review --ui',
+    apply: 'apply',
+    prune: 'extract --prune',
+  };
+  return `npx language-loop ${stage[action]}`;
+}
+
+export function renderCompletenessReport(report: CompletenessReport, config: Config): void {
+  heading('language completeness');
+
+  if (report.complete) {
+    console.log('');
+    console.log(`  ${c.green('complete')} — no hardcoded text, missing translations, or blocking integrity problems`);
+    renderLocaleCompletion(report);
+    console.log('');
+    return;
+  }
+
+  const blockers = report.findings.filter((finding) => finding.severity === 'block');
+  const warnings = report.findings.filter((finding) => finding.severity === 'warn');
+  console.log('');
+  console.log(`  ${c.red(String(blockers.length))} blocking finding(s), ${c.yellow(String(warnings.length))} warning(s)`);
+
+  for (const finding of [...blockers, ...warnings]) {
+    console.log('');
+    console.log(`  ${finding.severity === 'block' ? c.red('✗') : c.yellow('!')} ${finding.message}`);
+    if (finding.files.length) console.log(`    ${c.dim('files:')} ${finding.files.slice(0, 8).join(', ')}`);
+    if (finding.locales.length) console.log(`    ${c.dim('locales:')} ${finding.locales.join(', ')}`);
+    if (finding.keys.length) console.log(`    ${c.dim('keys:')} ${finding.keys.slice(0, 8).join(', ')}${finding.keys.length > 8 ? '…' : ''}`);
+  }
+
+  renderLocaleCompletion(report);
+
+  heading('next steps');
+  report.actions.forEach((action, index) => {
+    console.log(`  ${index + 1}. ${commandForAction(config, action)}`);
+  });
+  console.log('');
+}
+
+function renderLocaleCompletion(report: CompletenessReport): void {
+  const entries = Object.entries(report.byLocale);
+  if (!entries.length) return;
+  heading('selected locales');
+  for (const [locale, counts] of entries) {
+    const status = counts.missing || counts.stale || counts.blocked
+      ? c.yellow(`${counts.coverage}%`)
+      : c.green(`${counts.coverage}%`);
+    console.log(
+      `  ${locale.padEnd(14)} ${localeInfo(locale).english.padEnd(28)} ${status.padStart(5)}  ` +
+      `${counts.missing} missing  ${counts.stale} stale  ${counts.pending} pending  ${counts.blocked} blocked`
+    );
+  }
 }
