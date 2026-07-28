@@ -30,6 +30,20 @@ test('an invented placeholder is blocked', () => {
   assert.ok(issues.some((i) => i.rule === 'placeholder-invented' && i.severity === 'block'));
 });
 
+test('duplicate placeholder loss is blocked with occurrence counts', () => {
+  const issues = checkTranslations(
+    [unit({
+      source: '{name} invited {name}',
+      value: '{name} hat eingeladen',
+      placeholders: ['{name}'],
+    })],
+    baseConfig()
+  );
+  const lost = issues.find((i) => i.rule === 'placeholder-lost');
+  assert.ok(lost);
+  assert.match(lost.message, /2.*1|one of 2/i);
+});
+
 test('reordering a placeholder to suit the grammar is fine', () => {
   const issues = checkTranslations(
     [unit({ source: 'Welcome back, {name}', value: '{name}、おかえりなさい', locale: 'ja', placeholders: ['{name}'] })],

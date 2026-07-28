@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Config, TranslationUnit } from '../types.js';
+import type { Config, TranslationArtifact, TranslationBatch, TranslationUnit } from '../types.js';
 import { statePath } from './config.js';
 import { localeInfo } from './locales.js';
 
@@ -22,6 +22,8 @@ import { localeInfo } from './locales.js';
 
 export interface JudgeInput {
   config: Config;
+  batch: TranslationBatch;
+  translations: TranslationArtifact;
   /** Only units that passed the guardrails. */
   units: TranslationUnit[];
   /** Units already rejected mechanically, listed so the agent knows they exist. */
@@ -29,12 +31,16 @@ export interface JudgeInput {
 }
 
 export function writeJudgeBrief(cwd: string, input: JudgeInput): { file: string; units: number } {
-  const { config, units, blocked } = input;
+  const { config, batch, translations, units, blocked } = input;
+  const candidateById = new Map(
+    translations.translations.map((item) => [`${item.key}::${item.locale}`, item])
+  );
   const lines: string[] = [];
 
   lines.push('# Judging brief');
   lines.push('');
   lines.push(`Generated ${new Date().toISOString()} by language-loop.`);
+  lines.push(`Batch: \`${batch.id}\``);
   lines.push('');
   lines.push('You wrote these translations. Now read them back and decide, one by one, whether');
   lines.push('you would ship them. Write your verdicts to `.language-loop/verdicts.json` in the');
@@ -75,7 +81,9 @@ export function writeJudgeBrief(cwd: string, input: JudgeInput): { file: string;
   if (blocked.length) {
     lines.push(`## Already rejected mechanically — ${blocked.length}`);
     lines.push('');
-    lines.push('Listed so you know they are handled. Do not write verdicts for these.');
+    lines.push('`.language-loop/verdicts.json` already contains their hash-bound guardrail verdicts.');
+    lines.push('Keep every existing guardrail verdict exactly as written and append your verdicts');
+    lines.push('for the units below. Do not replace, edit, or drop the prefilled records.');
     lines.push('');
     for (const item of blocked.slice(0, 30)) {
       lines.push(`- \`${item.unit.key}\` · ${item.unit.locale} — ${item.reasons.join('; ')}`);
@@ -102,6 +110,10 @@ export function writeJudgeBrief(cwd: string, input: JudgeInput): { file: string;
       lines.push(`- **\`${unit.key}\`** · ${unit.kind} · \`${unit.file}\``);
       lines.push(`  - english: ${JSON.stringify(unit.source)}`);
       lines.push(`  - ${locale}: ${JSON.stringify(unit.value)}`);
+      const candidate = candidateById.get(`${unit.key}::${unit.locale}`);
+      if (!candidate) throw new Error(`Judge item ${unit.key}::${unit.locale} is not in the translation artifact.`);
+      lines.push(`  - source hash: \`${candidate.sourceHash}\``);
+      lines.push(`  - candidate hash: \`${candidate.candidateHash}\``);
       if (unit.notes) lines.push(`  - your note when you wrote it: ${unit.notes}`);
     }
     lines.push('');
@@ -111,15 +123,31 @@ export function writeJudgeBrief(cwd: string, input: JudgeInput): { file: string;
   lines.push('');
   lines.push('`.language-loop/verdicts.json`:');
   lines.push('');
+  if (blocked.length) {
+    lines.push('The file already exists. Preserve its current `verdicts` entries and append records');
+    lines.push('using this schema until the array covers the complete translation batch.');
+    lines.push('');
+  }
   lines.push('```json');
   lines.push('{');
+  lines.push('  "version": 1,');
+  lines.push(`  "batchId": "${batch.id}",`);
+  lines.push('  "producer": "agent:codex",');
   lines.push('  "verdicts": [');
-  lines.push('    { "key": "hero.getStartedFree", "locale": "de-DE", "ok": true },');
+  lines.push('    {');
+  lines.push('      "key": "hero.getStartedFree",');
+  lines.push('      "locale": "de-DE",');
+  lines.push('      "ok": true,');
+  lines.push('      "sourceHash": "copy the source hash printed above",');
+  lines.push('      "candidateHash": "copy the candidate hash printed above"');
+  lines.push('    },');
   lines.push('    {');
   lines.push('      "key": "errors.paymentFailed",');
   lines.push('      "locale": "de-DE",');
   lines.push('      "ok": false,');
-  lines.push('      "reason": "says the payment was cancelled, not that it failed — different meaning"');
+  lines.push('      "reason": "says the payment was cancelled, not that it failed — different meaning",');
+  lines.push('      "sourceHash": "copy the source hash printed above",');
+  lines.push('      "candidateHash": "copy the candidate hash printed above"');
   lines.push('    }');
   lines.push('  ]');
   lines.push('}');

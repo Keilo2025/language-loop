@@ -6,6 +6,12 @@ export const CONFIG_FILE = 'language-loop.config.json';
 export const STATE_DIR = '.language-loop';
 
 export function defaultConfig(detection: Detection): Config {
+  const sourceIncludes = [
+    '**/*.tsx', '**/*.jsx', '**/*.ts', '**/*.js',
+    '**/*.vue', '**/*.svelte', '**/*.astro',
+  ];
+  if (detection.framework === 'html') sourceIncludes.push('**/*.html');
+
   return {
     sourceLocale: 'en',
     locales: [],
@@ -13,10 +19,13 @@ export function defaultConfig(detection: Detection): Config {
     framework: detection.framework,
     messagesDir: detection.messagesDir,
     layout: detection.layout,
-    include: ['**/*.tsx', '**/*.jsx', '**/*.ts', '**/*.js', '**/*.vue', '**/*.svelte', '**/*.astro', '**/*.html'],
+    include: sourceIncludes,
     exclude: [
       '**/*.test.*', '**/*.spec.*', '**/*.stories.*', '**/*.d.ts',
       '**/*.config.*', '**/scripts/**', '**/tests/**', '**/__tests__/**',
+      '**/generated/**', '**/__generated__/**', '**/*.generated.*',
+      '**/locales/**', '**/locales.*', '**/locale-catalog.*',
+      '**/prototypes/**', '**/prototype/**',
     ],
     protectedFiles: ['LICENSE', 'CHANGELOG.md', 'README.md'],
     ignoreStrings: [],
@@ -31,6 +40,21 @@ export function defaultConfig(detection: Detection): Config {
     agents: [],
     marketingLoop: { enabled: false, respectPendingCopy: true },
     maxBatch: 200,
+    ai: {
+      maxAttempts: 2,
+      requestTimeoutMs: 30_000,
+      transientRetries: 2,
+      translator: 'google-tllm',
+      judge: 'openai-gpt-5.6-terra',
+      google: {
+        location: 'global',
+        model: 'general/translation-llm',
+      },
+      openai: {
+        model: 'gpt-5.6-terra',
+        reasoningEffort: 'low',
+      },
+    },
   };
 }
 
@@ -52,6 +76,12 @@ export function loadConfig(cwd: string): Config | null {
     ...raw,
     voice: { ...base.voice, ...(raw.voice ?? {}) },
     marketingLoop: { ...base.marketingLoop, ...(raw.marketingLoop ?? {}) },
+    ai: {
+      ...base.ai,
+      ...(raw.ai ?? {}),
+      google: { ...base.ai.google, ...(raw.ai?.google ?? {}) },
+      openai: { ...base.ai.openai, ...(raw.ai?.openai ?? {}) },
+    },
   } as Config;
 }
 

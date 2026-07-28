@@ -1,6 +1,6 @@
 import type { Config, GuardrailIssue, TranslationUnit } from '../types.js';
 import { localeInfo } from './locales.js';
-import { findPlaceholders } from './scan.js';
+import { findPlaceholderOccurrences } from './scan.js';
 
 /**
  * What must be true of a translation before a human is asked to look at it.
@@ -28,13 +28,27 @@ export function checkTranslations(units: TranslationUnit[], config: Config): Gua
     }
 
     // 1. Placeholder parity. The single most common way a translation breaks a build.
-    const wantPlaceholders = new Set(unit.placeholders.length ? unit.placeholders : findPlaceholders(source));
-    const gotPlaceholders = new Set(findPlaceholders(value));
-    for (const p of wantPlaceholders) {
-      if (!gotPlaceholders.has(p)) push('placeholder-lost', 'block', `source has ${p}, translation does not`);
+    const wantPlaceholders = occurrenceCounts(findPlaceholderOccurrences(source));
+    const gotPlaceholders = occurrenceCounts(findPlaceholderOccurrences(value));
+    for (const [placeholder, wanted] of wantPlaceholders) {
+      const got = gotPlaceholders.get(placeholder) ?? 0;
+      if (got < wanted) {
+        push(
+          'placeholder-lost',
+          'block',
+          `source has ${wanted} occurrence(s) of ${placeholder}; translation has ${got}`
+        );
+      }
     }
-    for (const p of gotPlaceholders) {
-      if (!wantPlaceholders.has(p)) push('placeholder-invented', 'block', `translation has ${p}, source does not`);
+    for (const [placeholder, got] of gotPlaceholders) {
+      const wanted = wantPlaceholders.get(placeholder) ?? 0;
+      if (got > wanted) {
+        push(
+          'placeholder-invented',
+          'block',
+          `translation has ${got} occurrence(s) of ${placeholder}; source has ${wanted}`
+        );
+      }
     }
 
     // 2. Markup integrity.
@@ -127,14 +141,20 @@ export function partition(units: TranslationUnit[], issues: GuardrailIssue[]): {
   for (const unit of units) {
     const id = `${unit.key}::${unit.locale}`;
     const unitIssues = byUnit.get(id) ?? [];
-    if (unitIssues.some((i) => i.severity === 'block')) {
+    if (unitIssues.length) {
+      if (unitIssues.some((issue) => issue.severity === 'flag')) flagged.set(id, unitIssues);
       blocked.push({ unit, issues: unitIssues });
       continue;
     }
-    if (unitIssues.length) flagged.set(id, unitIssues);
     kept.push(unit);
   }
   return { kept, blocked, flagged };
+}
+
+function occurrenceCounts(items: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const item of items) counts.set(item, (counts.get(item) ?? 0) + 1);
+  return counts;
 }
 
 function tagsBalanced(text: string): boolean {

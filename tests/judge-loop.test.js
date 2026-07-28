@@ -4,6 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import {
+  bindTranslationArtifact,
+  bindVerdictArtifact,
+} from '../dist/core/batch.js';
 
 /**
  * The judge closes the loop: translate -> judge -> apply -> back to translate
@@ -24,6 +28,32 @@ function run(dir, args) {
 
 const statePath = (dir, file) => path.join(dir, '.language-loop', file);
 const readMemory = (dir) => JSON.parse(fs.readFileSync(statePath(dir, 'memory.json'), 'utf8'));
+const readBatch = (dir) => JSON.parse(fs.readFileSync(statePath(dir, 'batch.json'), 'utf8'));
+
+function writeTranslationSubmission(dir, translations) {
+  const batch = readBatch(dir);
+  const units = new Map(batch.units.map((unit) => [`${unit.key}::${unit.locale}`, unit]));
+  fs.writeFileSync(
+    statePath(dir, 'translations.json'),
+    JSON.stringify({
+      version: 1,
+      batchId: batch.id,
+      producer: 'test-agent',
+      translations: translations.map((item) => ({
+        ...item,
+        sourceHash: units.get(`${item.key}::${item.locale}`).sourceHash,
+      })),
+    }, null, 2)
+  );
+}
+
+function writeCompleteArtifacts(dir, translations, verdicts) {
+  const batch = readBatch(dir);
+  const translationArtifact = bindTranslationArtifact(batch, translations, 'test-translator');
+  const verdictArtifact = bindVerdictArtifact(batch, translationArtifact, verdicts, 'test-judge');
+  fs.writeFileSync(statePath(dir, 'translations.json'), JSON.stringify(translationArtifact, null, 2));
+  fs.writeFileSync(statePath(dir, 'verdicts.json'), JSON.stringify(verdictArtifact, null, 2));
+}
 
 function project() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'll-judge-'));
@@ -64,13 +94,10 @@ function approveCurrentBrief(dir) {
   const locale = /^### ([^\s]+)/m.exec(brief)?.[1];
   const key = /- \*\*`([^`]+)`\*\*/.exec(brief)?.[1];
   assert.ok(locale && key, 'the current one-item brief must identify a locale and key');
-  fs.writeFileSync(
-    statePath(dir, 'translations.json'),
-    JSON.stringify({ translations: [{ key, locale, value: `${locale} translated` }] }, null, 2)
-  );
-  fs.writeFileSync(
-    statePath(dir, 'verdicts.json'),
-    JSON.stringify({ verdicts: [{ key, locale, ok: true }] }, null, 2)
+  writeCompleteArtifacts(
+    dir,
+    [{ key, locale, value: `${locale} translated` }],
+    [{ key, locale, ok: true }]
   );
   return { locale, key };
 }
@@ -85,17 +112,15 @@ function submitAndJudge(dir, label, { rejectFirst = true } = {}) {
       translations.push({ key, locale: 'de-DE', value: `DE ${label} ${entry.source}` });
     }
   }
-  fs.writeFileSync(statePath(dir, 'translations.json'), JSON.stringify({ translations }, null, 2));
-  fs.writeFileSync(
-    statePath(dir, 'verdicts.json'),
-    JSON.stringify({
-      verdicts: translations.map((t, i) => ({
-        key: t.key,
-        locale: t.locale,
-        ok: !(rejectFirst && i === 0),
-        ...(rejectFirst && i === 0 ? { reason: 'says the opposite of the English' } : {}),
-      })),
-    })
+  writeCompleteArtifacts(
+    dir,
+    translations,
+    translations.map((t, i) => ({
+      key: t.key,
+      locale: t.locale,
+      ok: !(rejectFirst && i === 0),
+      ...(rejectFirst && i === 0 ? { reason: 'says the opposite of the English' } : {}),
+    }))
   );
   return translations.length;
 }
@@ -109,7 +134,7 @@ test('the judge only sees what the guardrails could not decide', () => {
     // The first drops nothing; the second is empty, which the rules block.
     value: i === 0 ? 'Willkommen zurück' : '',
   }));
-  fs.writeFileSync(statePath(dir, 'translations.json'), JSON.stringify({ translations }, null, 2));
+  writeTranslationSubmission(dir, translations);
 
   const out = run(dir, ['judge']);
   assert.match(out, /1 already rejected by the guardrails/);
@@ -117,6 +142,41 @@ test('the judge only sees what the guardrails could not decide', () => {
 
   const brief = fs.readFileSync(statePath(dir, 'judge.md'), 'utf8');
   assert.match(brief, /Willkommen zurück/);
+  assert.match(brief, /keep.*guardrail verdict.*append/is);
+
+  const artifact = JSON.parse(fs.readFileSync(statePath(dir, 'translations.json'), 'utf8'));
+  const verdictArtifact = JSON.parse(fs.readFileSync(statePath(dir, 'verdicts.json'), 'utf8'));
+  assert.equal(verdictArtifact.verdicts.length, 1);
+  assert.equal(verdictArtifact.verdicts[0].by, 'guardrail');
+  const blockedIds = new Set(
+    verdictArtifact.verdicts.map((verdict) => `${verdict.key}::${verdict.locale}`)
+  );
+  const candidate = artifact.translations.find(
+    (item) => !blockedIds.has(`${item.key}::${item.locale}`)
+  );
+  verdictArtifact.producer = 'test-agent';
+  verdictArtifact.verdicts.push({
+    key: candidate.key,
+    locale: candidate.locale,
+    ok: true,
+    sourceHash: candidate.sourceHash,
+    candidateHash: candidate.candidateHash,
+    by: 'judge',
+  });
+  fs.writeFileSync(
+    statePath(dir, 'verdicts.json'),
+    JSON.stringify(verdictArtifact, null, 2)
+  );
+
+  run(dir, ['apply']);
+  const after = readMemory(dir);
+  const rejected = Object.values(after.entries).find(
+    (entry) => entry.translations['de-DE']?.status === 'rework'
+  );
+  assert.equal(rejected.translations['de-DE'].attempts, 1);
+  assert.ok(Object.values(after.entries).some(
+    (entry) => entry.translations['de-DE']?.status === 'approved'
+  ));
 });
 
 test('a rejected translation never reaches the catalogue', () => {
@@ -176,31 +236,29 @@ test('the loop finishes one language before starting the next', () => {
   assert.doesNotMatch(nextBrief, /^### fr-FR/m);
 });
 
-test('repeated judge rejections stay in the autonomous loop instead of asking the user to approve', () => {
+test('repeated judge rejections stop at the configured retry ceiling', () => {
   const dir = project();
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    if (attempt > 1) run(dir, ['translate']);
     submitAndJudge(dir, `try${attempt}`);
     run(dir, ['apply']);
   }
 
-  const out = run(dir, ['translate']);
-  assert.match(out, /1 item\(s\) need translating/);
-
   const memory = readMemory(dir);
-  const rework = Object.values(memory.entries).filter(
-    (entry) => entry.translations['de-DE']?.status === 'rework'
+  const terminal = Object.values(memory.entries).filter(
+    (entry) => entry.translations['de-DE']?.status === 'needs-human'
   );
-  assert.equal(rework.length, 1);
-  assert.equal(rework[0].translations['de-DE'].attempts, 3);
+  assert.equal(terminal.length, 1);
+  assert.equal(terminal[0].translations['de-DE'].attempts, 2);
 
   const status = run(dir, ['status']);
-  assert.match(status, /sent back by the judge/);
-  assert.doesNotMatch(status, /need a human|waiting on a person|approval/i);
+  assert.match(status, /needs-human|human/i);
 });
 
 test('new English resets the autonomous judge history', () => {
   const dir = project();
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    if (attempt > 1) run(dir, ['translate']);
     submitAndJudge(dir, `try${attempt}`);
     run(dir, ['apply']);
   }
@@ -227,7 +285,9 @@ test('apply refuses to bypass the AI judge for a guardrail-clean batch', () => {
     locale: 'de-DE',
     value: `DE ${entry.source}`,
   }));
-  fs.writeFileSync(statePath(dir, 'translations.json'), JSON.stringify({ translations }, null, 2));
+  const batch = readBatch(dir);
+  const artifact = bindTranslationArtifact(batch, translations, 'test-translator');
+  fs.writeFileSync(statePath(dir, 'translations.json'), JSON.stringify(artifact, null, 2));
 
   const result = spawnSync(process.execPath, ['dist/cli.js', 'apply', '--cwd', dir], {
     cwd: process.cwd(),

@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { defaultConfig } from '../dist/core/config.js';
 import { writeBrief } from '../dist/core/brief.js';
+import { createBatch } from '../dist/core/batch.js';
 
 test('translation brief asks for natural audience-locale product language', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lloop-brief-'));
@@ -24,18 +25,20 @@ test('translation brief asks for natural audience-locale product language', () =
     agents: ['cursor'],
   };
 
+  const work = [{
+    key: 'hero.getStarted',
+    locale: 'pt-BR',
+    source: 'Get started',
+    kind: 'cta',
+    file: 'src/Hero.tsx',
+    placeholders: [],
+    reason: 'new',
+  }];
   const result = writeBrief(dir, {
     config,
     memory: { version: 1, sourceLocale: 'en-US', updatedAt: '', entries: {} },
-    work: [{
-      key: 'hero.getStarted',
-      locale: 'pt-BR',
-      source: 'Get started',
-      kind: 'cta',
-      file: 'src/Hero.tsx',
-      placeholders: [],
-      reason: 'new',
-    }],
+    work,
+    batch: createBatch(work, { id: 'brief-batch', sourceLocale: 'en-US' }),
     marketing: {
       installed: false,
       hasRun: false,

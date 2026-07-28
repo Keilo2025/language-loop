@@ -9,11 +9,14 @@
 export type {
   Config, Detection, Memory, MemoryEntry, MemoryTranslation, ScannedString, KeyedString,
   TranslationUnit, GuardrailIssue, WorkItem, StringKind, Runtime, Framework, CatalogLayout,
+  TranslationBatch, BatchUnit, TranslationArtifact, TranslationCandidate,
+  VerdictArtifact, BoundVerdict, Verdict,
+  ComponentContext,
 } from './types.js';
 
 export { detect, callExpression, hookFor } from './core/detect.js';
 export { loadConfig, saveConfig, defaultConfig, requireConfig, CONFIG_FILE, STATE_DIR } from './core/config.js';
-export { scanRepo, isCopy, findPlaceholders } from './core/scan.js';
+export { scanRepo, isCopy, findPlaceholders, findPlaceholderOccurrences } from './core/scan.js';
 export { assignKeys, namespaceFor, slugFor, leafOf, namespaceOf } from './core/keys.js';
 export { planExtraction, applyExtraction } from './core/extract.js';
 export {
@@ -41,3 +44,37 @@ export type {
   FindingKind, SuggestedAction,
 } from './core/completeness.js';
 export { translateWithLlm } from './core/llm.js';
+export {
+  BATCH_FILE, TRANSLATIONS_FILE, VERDICTS_FILE, unitId, candidateHash,
+  createBatch, writeBatch, readBatch, validateBatchAgainstMemory, clearBatchArtifacts,
+  bindTranslationArtifact, bindTranslationSubmission, validateTranslationArtifact,
+  bindVerdictArtifact, validateVerdictArtifact,
+} from './core/batch.js';
+export { runTranslationLoop } from './core/runner.js';
+export type {
+  RunnerTranslator, RunnerJudge, RunTranslationLoopInput, RunTranslationLoopSummary,
+} from './core/runner.js';
+export { extractComponentContext, contextMap } from './core/context.js';
+export type { ContextOptions } from './core/context.js';
+export { ProviderRegistry, requestJson } from './core/providers.js';
+export type {
+  TranslationProvider, JudgeProvider, TranslationProviderRequest, JudgeProviderRequest,
+  FetchLike, JsonRequestOptions,
+} from './core/providers.js';
+export { GoogleTllmProvider } from './core/providers/google-tllm.js';
+export type { GoogleTllmOptions } from './core/providers/google-tllm.js';
+export { OpenAiJudgeProvider } from './core/providers/openai-judge.js';
+export type { OpenAiJudgeOptions } from './core/providers/openai-judge.js';
+export { loadEvalCorpus, loadEvalCandidates, evaluateCorpus } from './core/eval.js';
+export type {
+  EvalConstraints, EvalRecord, EvalCandidate, EvalFinding, EvalLocaleSummary, EvalReport,
+} from './core/eval.js';
+export { pseudolocalize, pseudoCatalog, protectedMessageTokens } from './core/pseudo.js';
+export type { PseudoLocale } from './core/pseudo.js';
+export {
+  DEFAULT_VISUAL_VIEWPORTS, buildLocaleUrl, runVisualChecks, createPlaywrightVisualDriver,
+} from './core/visual.js';
+export type {
+  VisualViewport, VisualOverflow, VisualInspection, VisualInspectionInput, VisualDriver,
+  VisualCheckOptions, VisualFinding, VisualCheck, VisualReport,
+} from './core/visual.js';

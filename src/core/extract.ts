@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Config, Edit, KeyedString, Runtime } from '../types.js';
 import { hookFor } from './detect.js';
-import { leafOf } from './keys.js';
+import { leafOf, namespaceFor } from './keys.js';
 import { Backup } from './backup.js';
+import { isExtractableSourceFile, scanRepo } from './scan.js';
 
 /**
  * Replace the words in the code with keys — the i18n half of the job.
@@ -85,6 +86,8 @@ export function planExtraction(cwd: string, strings: KeyedString[], config: Conf
     edits.push({
       file: s.file,
       line: s.line,
+      context: s.context,
+      attr: s.attr,
       before,
       after,
       key: s.key,
@@ -112,6 +115,14 @@ export interface ExtractResult {
   backupId: string | null;
 }
 
+function sourceBefore(source: KeyedString | Omit<KeyedString, 'key' | 'namespace'>): string {
+  return source.context.endsWith('attr') || source.context === 'literal' ? source.raw : source.text;
+}
+
+function editSignature(file: string, line: number, context: string | undefined, before: string): string {
+  return `${file}\u0000${line}\u0000${context ?? ''}\u0000${before}`;
+}
+
 export function applyExtraction(
   cwd: string,
   plan: ExtractPlan,
@@ -120,20 +131,75 @@ export function applyExtraction(
   transaction?: Backup
 ): ExtractResult {
   const backup = transaction ?? new Backup(cwd, 'extract');
+  const skipped: ExtractResult['skipped'] = [];
+  const verifiedEdits: Edit[] = [];
+  const verifiedWiring = new Map<string, ExtractPlan['wiring'][number]>();
+  const scanned = scanRepo(cwd, config).strings;
+  const scannedBySource = new Map(
+    scanned.map((source) => [
+      editSignature(source.file, source.line, source.context, sourceBefore(source)),
+      source,
+    ])
+  );
+
+  // ExtractPlan is public API input, so none of its code-shaped fields are
+  // trusted. Match each edit to a fresh scan, then regenerate both the exact
+  // replacement and its wiring from runtime-owned functions.
+  for (const proposed of plan.edits) {
+    const source = scannedBySource.get(
+      editSignature(proposed.file, proposed.line, proposed.context, proposed.before)
+    );
+    if (!source || !/^[A-Za-z0-9_.-]+$/.test(proposed.key)) {
+      skipped.push({ edit: proposed, reason: 'edit does not match a freshly scanned UI string' });
+      continue;
+    }
+    const regenerated = planExtraction(cwd, [{
+      ...source,
+      key: proposed.key,
+      namespace: namespaceFor(source.file),
+    }], config);
+    const canonical = regenerated.edits[0];
+    if (!canonical || canonical.after !== proposed.after) {
+      skipped.push({ edit: proposed, reason: 'replacement is not the runtime-generated form for this UI string' });
+      continue;
+    }
+    verifiedEdits.push(canonical);
+    for (const wiring of regenerated.wiring) {
+      const id = `${wiring.file}\u0000${wiring.namespace}\u0000${wiring.component ?? ''}`;
+      verifiedWiring.set(id, wiring);
+    }
+  }
+
   const byFile = new Map<string, Edit[]>();
-  for (const edit of plan.edits) {
+  for (const edit of verifiedEdits) {
     if (!byFile.has(edit.file)) byFile.set(edit.file, []);
     byFile.get(edit.file)!.push(edit);
   }
 
   const applied: Edit[] = [];
-  const skipped: ExtractResult['skipped'] = [];
   const filesTouched: string[] = [];
   let wiringAdded = 0;
 
   for (const [file, edits] of byFile) {
+    if (!isExtractableSourceFile(file, config)) {
+      for (const edit of edits) skipped.push({ edit, reason: 'file is outside the configured source scan boundary' });
+      continue;
+    }
+    const untrusted = edits.filter((edit) =>
+      !['jsx-text', 'jsx-attr', 'vue-text', 'vue-attr', 'literal'].includes(edit.context)
+    );
+    if (untrusted.length) {
+      for (const edit of untrusted) {
+        skipped.push({
+          edit,
+          reason: 'edit has no recognised rendered-text context — source code and styles are never rewritten',
+        });
+      }
+    }
+    const trustedEdits = edits.filter((edit) => !untrusted.includes(edit));
+    if (!trustedEdits.length) continue;
     if (config.protectedFiles.includes(file)) {
-      for (const edit of edits) skipped.push({ edit, reason: 'file is in protectedFiles' });
+      for (const edit of trustedEdits) skipped.push({ edit, reason: 'file is in protectedFiles' });
       continue;
     }
     const full = path.join(cwd, file);
@@ -141,7 +207,7 @@ export function applyExtraction(
     try {
       content = fs.readFileSync(full, 'utf8');
     } catch {
-      for (const edit of edits) skipped.push({ edit, reason: 'file could not be read' });
+      for (const edit of trustedEdits) skipped.push({ edit, reason: 'file could not be read' });
       continue;
     }
 
@@ -151,7 +217,7 @@ export function applyExtraction(
     const fileApplied: Edit[] = [];
 
     // Work bottom-up so earlier line numbers stay valid.
-    for (const edit of [...edits].sort((a, b) => b.line - a.line)) {
+    for (const edit of [...trustedEdits].sort((a, b) => b.line - a.line)) {
       const idx = edit.line - 1;
       const line = lines[idx];
       // A JSX text node may open on one line and hold its words on the next, so
@@ -193,7 +259,7 @@ export function applyExtraction(
     if (!fileApplied.length) continue;
 
     let next = lines.join('\n');
-    const fileWiring = plan.wiring.filter((w) => w.file === file);
+    const fileWiring = [...verifiedWiring.values()].filter((w) => w.file === file);
     if (fileWiring.length) {
       const wired = addWiring(next, fileWiring, config.runtime);
       if (!wired.ok) {

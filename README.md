@@ -15,6 +15,10 @@ npx language-loop extract     # turn them into keys and wire up the runtime
 npx language-loop translate   # brief your agent on what actually needs doing
 npx language-loop judge       # your agent grades its own translations
 npx language-loop apply       # write what passed; send the rest back round
+npx language-loop run --llm   # Google TLLM → guardrails → GPT-5.6 judge → apply
+npx language-loop eval --candidates translations.jsonl
+npx language-loop pseudo      # generate en-XA and ar-XB layout-stress catalogues
+npx language-loop visual-check --url 'http://localhost:3000/{locale}'
 npx language-loop audit       # read-only completeness report and ordered fixes
 ```
 
@@ -35,8 +39,9 @@ back to `translate` carrying the reason it failed, and round it goes again.
 The mechanical guardrails run *before* the judge, so tokens are never spent asking for an
 opinion on a translation that is already broken. The AI judge is the approval authority:
 it approves correct translations on behalf of the vibe coder and returns incorrect ones
-with a concrete correction until they pass. The loop continues through every batch without
-another user invocation, finishing one language before moving to the next.
+with a concrete correction until they pass. `run --llm` continues through every batch without
+another user invocation, finishing one language before moving to the next. The staged commands
+remain available when you want the vibe-coding agent you already use to be the translator.
 
 This exists because of a specific problem: **you probably cannot read the languages you are
 shipping.** A review screen asking you to approve two hundred Russian strings is not
@@ -86,7 +91,7 @@ telling your agent to write the everyday register rather than the textbook one.
 
 **l10n** fills those placeholders with actual languages:
 
-```json
+```jsonc
 // messages/en.json          // messages/de.json          // messages/ja.json
 { "hero": {                  { "hero": {                  { "hero": {
   "getStartedFree":            "getStartedFree":            "getStartedFree":
@@ -223,8 +228,9 @@ than a translation API does, because the translator can see the button:
 A machine translation service gets the string. Your agent gets the string, the element, the
 component, and the reason the words are there.
 
-Standalone? `--llm` uses `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. The same automated
-guardrails apply either way.
+For unattended runs, `run --llm` deliberately separates the two model jobs: Google Translation
+LLM generates candidates and GPT-5.6 Terra judges them independently. The same automated
+guardrails apply whether a coding agent or the provider-backed runner produced the candidate.
 
 ### 4. Guardrails decide what is safe to write
 
@@ -234,7 +240,7 @@ braces. An ICU plural with no `other` branch. A brand name from `doNotTranslate`
 survive. An empty translation. And a translation that begins "Here is the German version:" —
 the failure mode where a model answers the brief instead of doing it.
 
-**Held back automatically:** a plural message missing a category the target language actually uses
+**Returned for bounded rework:** a plural message missing a category the target language actually uses
 (Polish has four, Arabic has six — two branches is wrong for most numbers a user will see). A
 button three times the English length, which is a layout bug regardless of what it says. A
 glossary term rendered differently from the agreed translation. Copy identical to the source.
@@ -256,7 +262,7 @@ hard mechanical gates.
 
 ### 6. Apply touches catalogues, never code
 
-Only guardrail-clean translations. The English catalogue is regenerated from memory each time —
+Only hash-bound, guardrail-clean, judge-approved translations. The English catalogue is regenerated from memory each time —
 it is a projection of the code, not something to hand-edit. Keys the code no longer has are
 reported and kept, because a key vanishes when someone comments a component out for an
 afternoon; `--prune` removes them when you mean it.
@@ -289,15 +295,17 @@ belongs to the project rather than to whichever laptop happened to run the comma
 }
 ```
 
-Five statuses, and the distinctions matter:
+Seven statuses, and the distinctions matter:
 
 | status | meaning |
 | --- | --- |
 | `new` | never translated |
 | `stale` | the English changed after this was written — re-offered with the previous version attached |
 | `pending` | translated but not yet accepted into a catalogue |
-| `approved` | accepted by the automated guardrails |
+| `approved` | accepted by the automated guardrails and independent judge |
 | `manual` | a human wrote or edited it directly — never overwritten, by anything |
+| `rework` | rejected candidate; the concrete reason is fed into the next bounded attempt |
+| `needs-human` | `ai.maxAttempts` was reached; autonomous work stops for this key and locale |
 
 Once `extract` has run, the English lives in `messages/en.json`, and that becomes the place
 copy actually gets edited — by a writer, by marketing-loop, by anyone who does not want to open
@@ -444,7 +452,24 @@ marketing-loop — the freeze simply never engages.
   "maxLengthRatio": 2.0,
   "protectedFiles": ["LICENSE", "CHANGELOG.md"],
   "marketingLoop": { "enabled": true, "respectPendingCopy": true },
-  "maxBatch": 200
+  "maxBatch": 200,
+
+  "ai": {
+    "maxAttempts": 2,
+    "requestTimeoutMs": 30000,
+    "transientRetries": 2,
+    "translator": "google-tllm",
+    "judge": "openai-gpt-5.6-terra",
+    "google": {
+      "project": "my-google-cloud-project",
+      "location": "global",
+      "model": "general/translation-llm"
+    },
+    "openai": {
+      "model": "gpt-5.6-terra",
+      "reasoningEffort": "low"
+    }
+  }
 }
 ```
 
@@ -459,6 +484,116 @@ It intentionally does not create, style, or place the switcher itself.
 French `tu` and `vous`, Spanish `tú` and `usted` — pick one per product and hold it. Mixed
 address is the most common complaint about machine-translated software, and it is invisible
 until a native speaker sees it.
+
+---
+
+## Provider-backed production runs
+
+Use the coding-agent workflow when you want zero provider setup:
+
+```bash
+npx language-loop translate
+# the agent reads .language-loop/brief.md and writes translations.json
+npx language-loop judge
+# the agent reads judge.md and writes verdicts.json
+npx language-loop apply
+```
+
+Use the provider-backed workflow for reproducible CI or a fully unattended run:
+
+```bash
+export GOOGLE_CLOUD_PROJECT=my-google-cloud-project
+export GOOGLE_CLOUD_TRANSLATION_API_KEY=...  # Basic v2, or use the access token below
+# export GOOGLE_CLOUD_ACCESS_TOKEN=...       # Advanced v3 OAuth
+export OPENAI_API_KEY=...
+
+npx language-loop run --llm
+```
+
+The runner processes one locale at a time and binds every candidate to an immutable batch ID,
+source hash, context hash, and candidate hash. It then runs placeholder/ICU/markup/terminology
+guardrails, sends only mechanically clean candidates to GPT-5.6 Terra, applies approvals, and
+feeds concrete rejection reasons into the next attempt. Transport retries
+(`ai.transientRetries`) are separate from translation attempts (`ai.maxAttempts`). Reaching the
+translation ceiling changes the item to `needs-human` and exits non-zero instead of retrying
+forever.
+
+The provider roles are intentionally separate:
+
+- Google Translation LLM gets the source strings and source/target locale needed to generate
+  translations. A Translation API key uses Basic v2; an OAuth access token uses Advanced v3.
+- GPT-5.6 Terra gets the source, candidate, voice constraints, hashes, and a bounded,
+  secret-redacted component-context packet. Requests use strict structured output and
+  `store: false`.
+- The full repository and arbitrary files are never uploaded by the provider adapters.
+
+Provider failures, partial responses, unexpected keys, stale hashes, missing verdicts, and
+duplicate records all fail closed before catalogues are changed.
+
+### Workflow artifacts
+
+| file | purpose |
+| --- | --- |
+| `.language-loop/memory.json` | durable translation state; commit this file |
+| `.language-loop/batch.json` | current immutable batch manifest |
+| `.language-loop/brief.md` | staged translator instructions |
+| `.language-loop/translations.json` | candidates bound to the current batch |
+| `.language-loop/judge.md` | staged independent-judge instructions |
+| `.language-loop/verdicts.json` | source/candidate-hash-bound verdicts |
+
+Batch artifacts are ephemeral and should not be committed. Memory is the exception: it is the
+project record that makes incremental runs possible.
+
+---
+
+## Translation evaluation and layout validation
+
+The bundled corpus contains 25 reviewed cases across `de-DE`, `fr-FR`, `ja-JP`, `pt-BR`, and
+`ar-SA`. It covers CTA fit, named placeholders, critical destructive meanings, ICU plurals,
+security/session language, protected terms, formality, politeness, and RTL-sensitive copy.
+
+Candidate rows use `{"id":"corpus-id","translation":"…"}` JSONL:
+
+```bash
+npx language-loop eval \
+  --candidates tests/fixtures/eval-candidates.jsonl \
+  --out .language-loop/eval-report.json
+```
+
+The evaluator fails closed on missing or extra cases and deterministically checks placeholder
+parity, ICU structure/categories, required/protected terms, length limits, and critical meaning
+mutations. Exact reviewed-reference matches are reported separately from invariant safety.
+
+Pseudolocalization stresses layouts without sending text to any model:
+
+```bash
+npx language-loop pseudo                 # writes en-XA and ar-XB catalogues
+npx language-loop pseudo --dry-run
+```
+
+Visible `en-XA` text is accented and expanded by at least 30%; `ar-XB` is mirrored inside an
+RTL isolate. Placeholders, ICU blocks, interpolation, HTML/JSX tags, escapes, entities, and
+newline structure remain byte-identical.
+
+Browser validation is optional and loads Playwright only when invoked:
+
+```bash
+npm install --save-dev playwright
+npx playwright install chromium
+
+npx language-loop visual-check \
+  --url 'http://localhost:3000/{locale}' \
+  --viewport 1440x900,390x844 \
+  --strict
+```
+
+If the URL has no `{locale}` template, the command adds `?locale=…`; choose another name with
+`--locale-param lang`. By default it checks `en-XA`, `ar-XB`, and every configured RTL locale.
+Each run writes full-page screenshots plus `report.json` under a timestamped
+`.language-loop/visual/` directory. Horizontal document overflow, clipped/scrolling elements,
+incorrect `<html lang>`, missing `<html dir="rtl">`, computed LTR direction, console exceptions,
+and page errors fail the run. Physical `left`/`right` CSS declarations are warnings, or failures
+with `--strict`; prefer logical properties such as `margin-inline-start`.
 
 ---
 
@@ -485,8 +620,9 @@ framework. It never overwrites a file that already exists.
 ## Right-to-left
 
 Arabic, Hebrew and Persian need `dir="rtl"` on `<html>`, not just translated words. The loop
-tells you which of your locales are RTL and reminds you at `init`; the layout work is yours,
-because it is a design decision rather than a string one.
+tells you which locales are RTL during setup. `visual-check` verifies both the explicit `dir`
+attribute and computed browser direction, then exercises desktop and mobile widths using the
+mirrored `ar-XB` catalogue and configured RTL locales.
 
 ---
 
@@ -497,6 +633,8 @@ import {
   scanRepo, assignKeys, planExtraction, applyExtraction,
   loadMemory, syncMemory, pendingWork, writeBrief,
   checkTranslations, applyDecisions, loadConfig, analyzeCompleteness,
+  runTranslationLoop, ProviderRegistry, GoogleTllmProvider, OpenAiJudgeProvider,
+  loadEvalCorpus, evaluateCorpus, pseudoCatalog, runVisualChecks,
   COMMON_LOCALES, localesForRegions,
 } from 'language-loop';
 
@@ -534,15 +672,18 @@ is unambiguous, or add the file pattern to `include`.
 hook cannot legally be called there and rewriting it would produce an import-time crash. The
 fix is structural, and it is in the message.
 
-**A translation is wrong.** Fix it on the canvas, or in the catalogue directly. Either way it
-becomes `manual` and stays.
+**A translation is wrong.** Fix it in the catalogue directly. It becomes `manual` and stays.
+Generated candidates rejected by guardrails or the judge stay out of the catalogue and carry
+their correction note into the next bounded attempt.
 
 **Why is my ICU plural flagged in Polish but not in German?** German has two plural categories.
 Polish has four. A message with only `one` and `other` is wrong for 2, 3, 22 and 23 — which is
 most of the numbers a user will actually see.
 
-**Do my strings get uploaded?** Not by default. Everything is local. With `--llm`, the brief —
-which contains your source strings — goes to that API.
+**Do my strings get uploaded?** Not in the coding-agent workflow. With `run --llm`, Google
+receives source strings and locale codes; OpenAI receives source/candidate pairs, voice rules,
+hashes, and bounded redacted component context. Neither adapter sends full files. Provider
+retention and regional processing are still governed by the cloud accounts you configure.
 
 ---
 
@@ -551,7 +692,7 @@ which contains your source strings — goes to that API.
 ```
 npm install
 npm run build
-npm test          # 31 tests, no network
+npm test          # deterministic tests, no live provider credentials
 node dist/cli.js scan --cwd tests/fixture
 ```
 

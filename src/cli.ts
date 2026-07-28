@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
 import { CONFIG_FILE, defaultConfig, loadConfig, requireConfig, saveConfig, statePath } from './core/config.js';
 import { detect } from './core/detect.js';
@@ -23,7 +24,7 @@ import { wireRuntime } from './core/wire.js';
 import { Backup, revertLast } from './core/backup.js';
 import {
   AUDIENCE_LOCALES, COMMON_LOCALES, REGIONS, canonicalLocaleCode, localeInfo,
-  localesForRegions, searchLocales,
+  isRtl, localesForRegions, searchLocales,
   type LocaleRegion,
 } from './core/locales.js';
 import { resolveLocaleSelection } from './core/locale-selection.js';
@@ -34,7 +35,38 @@ import { analyzeCompleteness } from './core/completeness.js';
 import { exists, readJson, truncate, writeJson } from './core/util.js';
 import { readCatalog, missingKeys, orphanKeys, writeCatalog } from './core/catalog.js';
 import { estimateBatch, translateWithLlm } from './core/llm.js';
-import type { Config, TranslationUnit, Verdict } from './types.js';
+import { contextMap } from './core/context.js';
+import { ProviderRegistry } from './core/providers.js';
+import { GoogleTllmProvider } from './core/providers/google-tllm.js';
+import { OpenAiJudgeProvider } from './core/providers/openai-judge.js';
+import { runTranslationLoop } from './core/runner.js';
+import { evaluateCorpus, loadEvalCandidates, loadEvalCorpus } from './core/eval.js';
+import { pseudoCatalog, type PseudoLocale } from './core/pseudo.js';
+import {
+  createPlaywrightVisualDriver,
+  runVisualChecks,
+  type VisualViewport,
+} from './core/visual.js';
+import {
+  bindTranslationArtifact,
+  bindTranslationSubmission,
+  clearBatchArtifacts,
+  createBatch,
+  readBatch,
+  unitId,
+  validateBatchAgainstMemory,
+  validateTranslationArtifact,
+  validateVerdictArtifact,
+  writeBatch,
+} from './core/batch.js';
+import type {
+  BoundVerdict,
+  Config,
+  TranslationArtifact,
+  TranslationBatch,
+  TranslationUnit,
+  VerdictArtifact,
+} from './types.js';
 
 const argv = process.argv.slice(2);
 const command = argv[0] ?? 'help';
@@ -47,10 +79,6 @@ function valueOf(name: string): string | undefined {
   const i = argv.indexOf(name);
   if (i !== -1 && argv[i + 1] && !argv[i + 1]!.startsWith('--')) return argv[i + 1];
   return undefined;
-}
-
-function unitId(key: string, locale: string): string {
-  return `${key}::${locale}`;
 }
 
 function listOf(name: string): string[] {
@@ -124,6 +152,11 @@ async function main(): Promise<void> {
     case 'translate': return cmdTranslate();
     case 'judge': return cmdJudge();
     case 'apply': return cmdApply();
+    case 'run': return cmdRun();
+    case 'eval': return cmdEval();
+    case 'pseudo': return cmdPseudo();
+    case 'visual': return cmdVisual();
+    case 'visual-check': return cmdVisual();
     case 'status': return cmdStatus();
     case 'doctor': return cmdDoctor();
     case 'audit': return cmdAudit();
@@ -611,11 +644,19 @@ async function cmdTranslate(): Promise<void> {
   const activeLocaleWork = usable.filter((item) => item.locale === activeLocale);
   const batch = activeLocaleWork.slice(0, config.maxBatch);
   const heldBack = usable.length - batch.length;
+  const contexts = contextMap(cwd, memory, batch);
+  const manifest = createBatch(batch, {
+    sourceLocale: config.sourceLocale,
+    contextHashes: new Map([...contexts].map(([id, context]) => [id, context.hash])),
+  });
+  const cleared = clearBatchArtifacts(cwd);
+  writeBatch(cwd, manifest);
 
   const brief = writeBrief(cwd, {
     config,
     memory,
     work: batch,
+    batch: manifest,
     marketing,
     openItems,
     frozen: work.filter((w) => frozen.has(w.source)).map((w) => w.source),
@@ -631,6 +672,8 @@ async function cmdTranslate(): Promise<void> {
 
   console.log('');
   console.log(`  ${c.green('+')} ${brief.file}  ${c.dim(`(${brief.units} item(s))`)}`);
+  console.log(`  ${c.green('+')} .language-loop/batch.json  ${c.dim(`(${manifest.id})`)}`);
+  if (cleared.length) console.log(c.dim(`  cleared stale ${cleared.join(', ')}`));
   if (heldBack) {
     console.log(
       c.dim(`  ${heldBack} more held back — maxBatch is ${config.maxBatch}. Run translate again after this batch lands.`)
@@ -645,7 +688,7 @@ async function cmdTranslate(): Promise<void> {
   // Awaited, not fired and forgotten: an unawaited rejection here escapes
   // main()'s catch and buries a written-for-humans error under a stack trace.
   if (flags.has('--llm')) {
-    return runLlm(config, batch);
+    return runLlm(config, batch, manifest);
   }
 
   // A new brief means a new batch, which makes every review artefact on disk
@@ -666,12 +709,223 @@ async function cmdTranslate(): Promise<void> {
   ]);
 }
 
-async function runLlm(config: Config, work: ReturnType<typeof pendingWork>): Promise<void> {
+async function runLlm(
+  config: Config,
+  work: ReturnType<typeof pendingWork>,
+  batch: TranslationBatch
+): Promise<void> {
   console.log('\n' + c.dim(`--llm: ${estimateBatch(work, config)}`));
   const result = await translateWithLlm(cwd, work, config);
-  writeJson(statePath(cwd, 'translations.json'), { translations: result.translations, model: result.model });
+  const artifact = bindTranslationArtifact(batch, result.translations, `llm:${result.model}`);
+  writeJson(statePath(cwd, 'translations.json'), artifact);
   console.log(`  ${c.green('+')} .language-loop/translations.json  ${c.dim(`(${result.translations.length} from ${result.model})`)}`);
   nextStep([commandForStage(config, 'judge') + '  ' + c.dim('# AI-check meaning, register and fit')]);
+}
+
+async function cmdRun(): Promise<void> {
+  if (!flags.has('--llm')) {
+    throw new Error(
+      'The end-to-end run command requires --llm.\n' +
+      'For the agent-driven workflow, run language-loop translate, judge, and apply as separate stages.'
+    );
+  }
+  const config = requireConfig(cwd);
+  const memory = loadMemory(cwd, config.sourceLocale);
+  adoptCatalogEdits(cwd, memory, config);
+  adoptSourceEdits(cwd, memory, config);
+  const registry = new ProviderRegistry()
+    .registerTranslator(new GoogleTllmProvider())
+    .registerJudge(new OpenAiJudgeProvider());
+  const translator = registry.translator(config.ai.translator);
+  const judge = registry.judge(config.ai.judge);
+  const dryRun = flags.has('--dry-run');
+  const summary = await runTranslationLoop({
+    cwd,
+    memory,
+    config,
+    dryRun,
+    locales: listOf('--locales'),
+    translator: (batch, contexts) => translator.translate({ batch, contexts, config }),
+    judge: (batch, translations, units, contexts) =>
+      judge.judge({ batch, translations, units, contexts, config }),
+  });
+  if (!dryRun && summary.batches === 0) saveMemory(cwd, memory);
+
+  heading(dryRun ? 'end-to-end LLM dry run' : 'end-to-end LLM run');
+  console.log(`  provider: ${translator.id} → ${judge.id}`);
+  console.log(
+    `  ${summary.batches} batch(es), ${summary.translated} candidate(s), ${summary.applied} applied`
+  );
+  if (summary.rework) {
+    console.log(`  ${summary.rework} candidate(s) repaired through bounded retry`);
+  }
+  if (summary.needsHuman) {
+    console.log(
+      `  ${c.yellow(String(summary.needsHuman))} translation(s) reached ai.maxAttempts and need native review`
+    );
+  }
+  console.log(`  status: ${summary.status}`);
+  if (summary.status !== 'complete') process.exitCode = 2;
+}
+
+function cmdEval(): void {
+  const localDefault = path.join(cwd, 'evals', 'multilingual.jsonl');
+  const packagedDefault = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..',
+    'evals',
+    'multilingual.jsonl'
+  );
+  const corpusArg = valueOf('--corpus');
+  const candidateArg = valueOf('--candidates');
+  if (!candidateArg) {
+    throw new Error(
+      'Evaluation needs --candidates <file.jsonl>.\n' +
+      'Each JSONL row must contain {"id":"corpus-id","translation":"candidate text"}.'
+    );
+  }
+  const corpusFile = corpusArg
+    ? path.resolve(cwd, corpusArg)
+    : (exists(localDefault) ? localDefault : packagedDefault);
+  const candidateFile = path.resolve(cwd, candidateArg);
+  const report = evaluateCorpus(
+    loadEvalCorpus(corpusFile),
+    loadEvalCandidates(candidateFile)
+  );
+  const out = valueOf('--out');
+  if (out) writeJson(path.resolve(cwd, out), report);
+  if (flags.has('--json')) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    heading('multilingual evaluation');
+    for (const [locale, result] of Object.entries(report.byLocale)) {
+      console.log(
+        `  ${locale}: ${result.passed}/${result.total} invariant-safe, ` +
+        `${result.referenceMatches}/${result.total} exact reference`
+      );
+    }
+    const errors = report.findings.filter((finding) => finding.severity === 'error');
+    for (const finding of errors.slice(0, 20)) {
+      console.log(`  ${c.red('!')} ${finding.id} · ${finding.rule} — ${finding.message}`);
+    }
+    if (errors.length > 20) console.log(c.dim(`  …and ${errors.length - 20} more errors`));
+    console.log(`  result: ${report.ok ? c.green('pass') : c.red('fail')}`);
+  }
+  if (!report.ok) process.exitCode = 2;
+}
+
+function cmdPseudo(): void {
+  const config = requireConfig(cwd);
+  const source = readCatalog(cwd, config, config.sourceLocale);
+  if (!Object.keys(source).length) {
+    throw new Error(
+      `The source catalogue for ${config.sourceLocale} is empty.\n` +
+      'Run language-loop extract before generating pseudo-locales.'
+    );
+  }
+  const requested = listOf('--locales');
+  const locales = (requested.length ? requested : ['en-XA', 'ar-XB']) as PseudoLocale[];
+  for (const locale of locales) {
+    if (locale !== 'en-XA' && locale !== 'ar-XB') {
+      throw new Error(`Unsupported pseudo-locale "${locale}". Use en-XA or ar-XB.`);
+    }
+  }
+
+  heading(flags.has('--dry-run') ? 'pseudolocalization dry run' : 'pseudolocalization');
+  for (const locale of locales) {
+    const catalog = pseudoCatalog(source, locale);
+    const files = flags.has('--dry-run')
+      ? [catalogPathForReport(config, locale)]
+      : writeCatalog(cwd, config, locale, catalog);
+    console.log(
+      `  ${flags.has('--dry-run') ? c.dim('would write') : c.green('+')} ` +
+      `${locale}: ${Object.keys(catalog).length} key(s) → ${files.join(', ')}`
+    );
+  }
+}
+
+async function cmdVisual(): Promise<void> {
+  const config = requireConfig(cwd);
+  const url = valueOf('--url');
+  if (!url) {
+    throw new Error(
+      'Visual validation needs --url <page>.\n' +
+      'Use {locale} in the URL path, or --locale-param to select a query parameter.'
+    );
+  }
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url.replaceAll('{locale}', 'en-XA'));
+  } catch {
+    throw new Error(`Visual validation needs an absolute http(s) URL, received "${url}".`);
+  }
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    throw new Error(`Visual validation only opens http(s) pages, received "${parsedUrl.protocol}".`);
+  }
+
+  const requested = listOf('--locales');
+  const locales = requested.length
+    ? requested
+    : [...new Set(['en-XA', 'ar-XB', ...config.locales.filter((locale) => isRtl(locale))])];
+  const runId = new Date().toISOString().replace(/[:.]/g, '-');
+  const outDir = path.resolve(
+    cwd,
+    valueOf('--out-dir') ?? path.join('.language-loop', 'visual', runId)
+  );
+  const reportFile = path.resolve(cwd, valueOf('--out') ?? path.join(outDir, 'report.json'));
+  const viewports = parseVisualViewports(valueOf('--viewport'));
+  const driver = await createPlaywrightVisualDriver();
+  const report = await runVisualChecks({
+    url,
+    locales,
+    outDir,
+    localeParam: valueOf('--locale-param') ?? 'locale',
+    viewports,
+    strict: flags.has('--strict'),
+  }, driver);
+  writeJson(reportFile, report);
+
+  heading('browser localization validation');
+  for (const check of report.checks) {
+    console.log(
+      `  ${check.locale} · ${check.viewport.name} ${check.viewport.width}×${check.viewport.height}` +
+      ` · ${check.overflowCount ? c.red(`${check.overflowCount} overflow`) : c.green('fits')}`
+    );
+    console.log(c.dim(`    ${check.screenshot}`));
+  }
+  for (const finding of report.findings.slice(0, 30)) {
+    const marker = finding.severity === 'error' ? c.red('!') : c.yellow('!');
+    console.log(`  ${marker} ${finding.locale}/${finding.viewport} · ${finding.rule} — ${finding.message}`);
+  }
+  if (report.findings.length > 30) {
+    console.log(c.dim(`  …and ${report.findings.length - 30} more findings`));
+  }
+  console.log(`  report: ${reportFile}`);
+  console.log(`  result: ${report.ok ? c.green('pass') : c.red('fail')}`);
+  if (!report.ok) process.exitCode = 2;
+}
+
+function parseVisualViewports(raw: string | undefined): VisualViewport[] | undefined {
+  if (!raw) return undefined;
+  return raw.split(',').map((value, index) => {
+    const match = value.trim().match(/^(\d+)x(\d+)$/i);
+    if (!match) {
+      throw new Error(
+        `Invalid viewport "${value}". Use WIDTHxHEIGHT, for example 390x844.`
+      );
+    }
+    return {
+      name: `custom-${index + 1}`,
+      width: Number(match[1]),
+      height: Number(match[2]),
+    };
+  });
+}
+
+function catalogPathForReport(config: Config, locale: string): string {
+  return config.layout === 'namespaced'
+    ? path.posix.join(config.messagesDir, locale, '*.json')
+    : path.posix.join(config.messagesDir, `${locale}.json`);
 }
 
 /**
@@ -681,6 +935,8 @@ async function runLlm(config: Config, work: ReturnType<typeof pendingWork>): Pro
 function cmdJudge(): void {
   const config = requireConfig(cwd);
   const memory = loadMemory(cwd, config.sourceLocale);
+  const batch = readBatch(cwd);
+  validateBatchAgainstMemory(batch, memory);
 
   const file = statePath(cwd, 'translations.json');
   if (!exists(file)) {
@@ -690,25 +946,22 @@ function cmdJudge(): void {
     );
   }
 
-  const raw = readJson<{ translations?: { key: string; locale: string; value: string; note?: string }[] }>(file, {});
-  const incoming = raw.translations ?? [];
-  if (!incoming.length) throw new Error('translations.json has no "translations" array, or it is empty.');
-
-  const byId = new Map<string, (typeof incoming)[number]>();
-  for (const item of incoming) byId.set(unitId(item.key, item.locale), item);
+  const raw = readJson<unknown>(file, null);
+  const translations = bindTranslationSubmission(batch, raw);
+  writeJson(file, translations);
+  const batchById = new Map(batch.units.map((unit) => [unitId(unit.key, unit.locale), unit]));
 
   const units: TranslationUnit[] = [];
-  for (const item of byId.values()) {
-    const entry = memory.entries[item.key];
-    if (!entry) continue;
+  for (const item of translations.translations) {
+    const unit = batchById.get(unitId(item.key, item.locale))!;
     units.push({
       key: item.key,
       locale: item.locale,
-      source: entry.source,
+      source: unit.source,
       value: item.value,
-      kind: entry.kind,
-      file: entry.file,
-      placeholders: entry.placeholders,
+      kind: unit.kind,
+      file: unit.file,
+      placeholders: unit.placeholders,
       status: 'pending',
       notes: item.note,
     });
@@ -723,6 +976,36 @@ function cmdJudge(): void {
   }
   console.log(`  ${c.green(String(kept.length))} need a verdict`);
 
+  const candidateById = new Map(
+    translations.translations.map((item) => [unitId(item.key, item.locale), item])
+  );
+  const guardrailVerdicts: BoundVerdict[] = blocked.map(({ unit, issues: unitIssues }) => {
+    const candidate = candidateById.get(unitId(unit.key, unit.locale))!;
+    return {
+      key: unit.key,
+      locale: unit.locale,
+      ok: false,
+      reason: unitIssues.map((issue) => `${issue.rule}: ${issue.message}`).join('; '),
+      sourceHash: candidate.sourceHash,
+      candidateHash: candidate.candidateHash,
+      by: 'guardrail',
+    };
+  });
+  writeJson(statePath(cwd, 'verdicts.json'), {
+    version: 1,
+    batchId: batch.id,
+    producer: 'language-loop:guardrails',
+    verdicts: guardrailVerdicts,
+  } satisfies VerdictArtifact);
+  if (guardrailVerdicts.length) {
+    const values = new Map(translations.translations.map((item) => [
+      unitId(item.key, item.locale),
+      item.value,
+    ]));
+    recordVerdicts(memory, guardrailVerdicts, values, config);
+    saveMemory(cwd, memory);
+  }
+
   if (!kept.length) {
     nextStep([commandForStage(config, 'apply')]);
     return;
@@ -730,6 +1013,8 @@ function cmdJudge(): void {
 
   const brief = writeJudgeBrief(cwd, {
     config,
+    batch,
+    translations,
     units: kept,
     blocked: blocked.map((b) => ({ unit: b.unit, reasons: b.issues.map((i) => i.message) })),
   });
@@ -747,15 +1032,20 @@ function cmdJudge(): void {
 function cmdApply(): void {
   const config = requireConfig(cwd);
   const memory = loadMemory(cwd, config.sourceLocale);
+  const batch = readBatch(cwd);
+  validateBatchAgainstMemory(batch, memory);
   // decisions.json belonged to the removed human review canvas. Never let a
   // stale saved click override the AI judge after an upgrade.
   let decisions: Record<string, Decision> = {};
   let heldBack = 0;
 
   const verdictFile = statePath(cwd, 'verdicts.json');
-  const verdicts = exists(verdictFile)
-    ? (readJson<{ verdicts?: Verdict[] }>(verdictFile, {}).verdicts ?? [])
-    : [];
+  if (!exists(verdictFile)) {
+    throw new Error(
+      `AI judge verdicts missing for batch ${batch.id}.\n` +
+      `Run  ${commandForStage(config, 'judge')}  and complete .language-loop/verdicts.json before apply.`
+    );
+  }
   const judgedValues = new Map<string, string>();
 
   if (!Object.keys(decisions).length) {
@@ -767,29 +1057,27 @@ function cmdApply(): void {
       );
     }
 
-    const raw = readJson<{ translations?: { key: string; locale: string; value: string; note?: string }[] }>(file, {});
-    const incoming = raw.translations ?? [];
-    if (!incoming.length) throw new Error('translations.json has no "translations" array, or it is empty.');
-
-    const byId = new Map<string, (typeof incoming)[number]>();
-    for (const item of incoming) byId.set(unitId(item.key, item.locale), item);
+    const translations = validateTranslationArtifact(batch, readJson<unknown>(file, null));
+    const verdictArtifact = validateVerdictArtifact(
+      batch,
+      translations,
+      readJson<unknown>(verdictFile, null)
+    );
+    const verdicts = verdictArtifact.verdicts;
+    const batchById = new Map(batch.units.map((unit) => [unitId(unit.key, unit.locale), unit]));
 
     const units: TranslationUnit[] = [];
-    for (const item of byId.values()) {
-      const entry = memory.entries[item.key];
-      if (!entry) {
-        heldBack++;
-        continue;
-      }
+    for (const item of translations.translations) {
+      const unit = batchById.get(unitId(item.key, item.locale))!;
       units.push({
         key: item.key,
         locale: item.locale,
-        source: entry.source,
+        source: unit.source,
         value: item.value,
-        kind: entry.kind,
-        file: entry.file,
-        placeholders: entry.placeholders,
-        status: entry.translations[item.locale]?.status === 'stale' ? 'stale' : 'pending',
+        kind: unit.kind,
+        file: unit.file,
+        placeholders: unit.placeholders,
+        status: memory.entries[item.key]?.translations[item.locale]?.status === 'stale' ? 'stale' : 'pending',
         notes: item.note,
       });
       judgedValues.set(unitId(item.key, item.locale), item.value);
@@ -798,20 +1086,13 @@ function cmdApply(): void {
     const issues = checkTranslations(units, config);
     const unsafe = new Set(issues.map((issue) => unitId(issue.key, issue.locale)));
     heldBack += unsafe.size;
-
-    // Guardrails prove only that a string is mechanically safe. Every survivor
-    // needs an explicit AI verdict before it can reach a catalogue.
     const verdictById = new Map(
       verdicts.map((verdict) => [unitId(verdict.key, verdict.locale), verdict])
     );
-    const unjudged = units.filter((unit) => {
-      const id = unitId(unit.key, unit.locale);
-      return !unsafe.has(id) && !verdictById.has(id);
-    });
-    if (unjudged.length) {
+    const unsafeApproved = [...unsafe].filter((id) => verdictById.get(id)?.ok);
+    if (unsafeApproved.length) {
       throw new Error(
-        `AI judge verdicts missing for ${unjudged.length} guardrail-clean translation(s).\n` +
-          `Run  ${commandForStage(config, 'judge')}  and write .language-loop/verdicts.json before apply.`
+        `Verdict artifact tries to approve mechanically unsafe translation(s): ${unsafeApproved.join(', ')}.`
       );
     }
 
@@ -843,7 +1124,16 @@ function cmdApply(): void {
 
   // After applying, not before: applyDecisions writes the approved translations
   // into memory, and recording verdicts first would have them overwrite it.
-  const judged = verdicts.length ? recordVerdicts(memory, verdicts, judgedValues) : null;
+  const persistedVerdicts = validateVerdictArtifact(
+    batch,
+    validateTranslationArtifact(
+      batch,
+      readJson<unknown>(statePath(cwd, 'translations.json'), null)
+    ),
+    readJson<unknown>(verdictFile, null)
+  ).verdicts;
+  const judgeVerdicts = persistedVerdicts.filter((verdict) => verdict.by !== 'guardrail');
+  const judged = judgeVerdicts.length ? recordVerdicts(memory, judgeVerdicts, judgedValues, config) : null;
   if (judged && !dryRun) {
     saveMemory(cwd, memory);
     fs.rmSync(statePath(cwd, 'verdicts.json'), { force: true });
@@ -921,11 +1211,13 @@ function cmdStatus(): void {
     console.log(`  ${c.yellow(String(work.length))} translation(s) outstanding${stale ? `, ${stale} of them stale because the English changed` : ''}${rework ? `, ${rework} sent back by the judge` : ''}`);
   }
 
-  // Old versions could strand entries in needs-human. pendingWork revives
-  // them; surface that migration without asking the user to decide.
+  // A bounded autonomous loop must end somewhere. These entries have consumed
+  // their configured attempts and now need a native-speaking owner.
   const stuck = needsHuman(memory);
   if (stuck.length) {
-    console.log(`  ${c.yellow(String(stuck.length))} legacy translation(s) will return to the AI judge loop:`);
+    console.log(
+      `  ${c.yellow(String(stuck.length))} translation(s) reached the retry ceiling and need human/native review:`
+    );
     for (const item of stuck.slice(0, 8)) {
       console.log(`    ${c.dim(`${item.key} · ${item.locale}`)} — ${item.note}`);
     }
@@ -1069,6 +1361,10 @@ ${c.bold('the loop')}
   npx language-loop translate        write the brief; your agent does the language work
   npx language-loop judge            your agent grades its own translations
   npx language-loop apply            write what passed; send the rest back round
+  npx language-loop run --llm        Google TLLM → guardrails → GPT-5.6 judge → apply
+  npx language-loop eval             score a JSONL candidate set against the corpus
+  npx language-loop pseudo           generate syntax-safe en-XA and ar-XB catalogues
+  npx language-loop visual-check     screenshot overflow and RTL browser validation
 
 ${c.bold('the rest')}
   npx language-loop status           coverage per language, what is stale
@@ -1080,11 +1376,19 @@ ${c.bold('the rest')}
 
 ${c.bold('flags')}
   --cwd <dir>        run somewhere other than here
-  --dry-run          on extract and apply: show, do not write
+  --dry-run          on extract, apply, run and pseudo: show, do not write
   --locales de,fr    init: locale codes, or "all" (audience locales) or
-                     "everything" (every language); translate: limit locales
+                     "everything" (every language); limit translate/run/pseudo/visual
   --regions europe   init: every locale used in comma-separated regions
-  --llm              translate without an agent, using ANTHROPIC_API_KEY or OPENAI_API_KEY
+  --llm              end-to-end: Google TLLM plus independent GPT-5.6 Terra judging
+  --candidates <file> eval: JSONL translations keyed by corpus id
+  --corpus <file>     eval: override the bundled multilingual corpus
+  --out <file>        eval/visual: machine-readable report path
+  --url <page>        visual: absolute URL; {locale} may appear in its path
+  --locale-param lang visual: locale query parameter when --url has no template
+  --viewport 390x844  visual: override desktop/mobile defaults; comma-separated
+  --out-dir <dir>     visual: screenshot directory
+  --strict            visual: make physical left/right CSS warnings release-blocking
   --prune            on extract: forget memory keys the code no longer calls
                      on apply: drop catalogue keys the code no longer has
   --all / --list     on install: every agent, or show the ids

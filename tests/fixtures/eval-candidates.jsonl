@@ -1,0 +1,25 @@
+{"id":"de-DE.cta.start-free","translation":"Kostenlos starten"}
+{"id":"de-DE.welcome.named","translation":"Willkommen zurück, {name}"}
+{"id":"de-DE.account.delete","translation":"Konto löschen"}
+{"id":"de-DE.invoice.plural","translation":"{count, plural, one {# Rechnung ist fällig} other {# Rechnungen sind fällig}}"}
+{"id":"de-DE.session.formal","translation":"Language Loop: Ihre Sitzung ist abgelaufen. Melden Sie sich erneut an."}
+{"id":"fr-FR.cta.start-free","translation":"Commencer gratuitement"}
+{"id":"fr-FR.welcome.named","translation":"Bon retour, {name}"}
+{"id":"fr-FR.account.delete","translation":"Supprimer le compte"}
+{"id":"fr-FR.invoice.plural","translation":"{count, plural, one {# facture est à régler} other {# factures sont à régler}}"}
+{"id":"fr-FR.session.formal","translation":"Language Loop : votre session a expiré. Reconnectez-vous."}
+{"id":"ja-JP.cta.start-free","translation":"無料で始める"}
+{"id":"ja-JP.welcome.named","translation":"おかえりなさい、{name}さん"}
+{"id":"ja-JP.account.delete","translation":"アカウントを削除"}
+{"id":"ja-JP.invoice.plural","translation":"{count, plural, other {請求書が#件未払いです}}"}
+{"id":"ja-JP.session.formal","translation":"Language Loop：セッションの有効期限が切れました。もう一度ログインしてください。"}
+{"id":"pt-BR.cta.start-free","translation":"Começar grátis"}
+{"id":"pt-BR.welcome.named","translation":"Que bom ter você de volta, {name}"}
+{"id":"pt-BR.account.delete","translation":"Excluir conta"}
+{"id":"pt-BR.invoice.plural","translation":"{count, plural, one {# fatura está pendente} other {# faturas estão pendentes}}"}
+{"id":"pt-BR.session.formal","translation":"Language Loop: sua sessão expirou. Entre novamente."}
+{"id":"ar-SA.cta.start-free","translation":"ابدأ مجانًا"}
+{"id":"ar-SA.welcome.named","translation":"مرحبًا بعودتك، {name}"}
+{"id":"ar-SA.account.delete","translation":"حذف الحساب"}
+{"id":"ar-SA.invoice.plural","translation":"{count, plural, zero {لا توجد فواتير مستحقة} one {فاتورة واحدة مستحقة} two {فاتورتان مستحقتان} few {# فواتير مستحقة} many {# فاتورة مستحقة} other {# فاتورة مستحقة}}"}
+{"id":"ar-SA.session.formal","translation":"Language Loop: انتهت صلاحية جلستك. سجّل الدخول مرة أخرى."}

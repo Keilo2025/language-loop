@@ -5,7 +5,12 @@ dist/
 .DS_Store
 .language-loop/backups/
 .language-loop/brief.md
+.language-loop/batch.json
 .language-loop/translations.json
+.language-loop/judge.md
+.language-loop/verdicts.json
 .language-loop/review.md
+.language-loop/visual/
+.language-loop/eval-report.json
 tests/tmp/
 .worktrees/

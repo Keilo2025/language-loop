@@ -22,6 +22,7 @@
     "cursor",
     "codex",
     "agents",
+    "evals",
     "ai-agent",
     "plugin",
     "vibe-coding"
@@ -39,6 +40,7 @@
     "skills",
     "commands",
     "agents",
+    "evals",
     ".claude-plugin",
     "README.md",
     "LICENSE"

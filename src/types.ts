@@ -99,6 +99,25 @@ export interface Config {
     respectPendingCopy: boolean;
   };
   maxBatch: number;
+  ai: {
+    /** Maximum generated candidates for one source/locale before human ownership is required. */
+    maxAttempts: number;
+    /** Wall-clock limit for one provider request. */
+    requestTimeoutMs: number;
+    /** Additional attempts for transient transport/provider failures. */
+    transientRetries: number;
+    translator: string;
+    judge: string;
+    google: {
+      project?: string;
+      location: string;
+      model: string;
+    };
+    openai: {
+      model: string;
+      reasoningEffort: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+    };
+  };
 }
 
 export interface ScannedString {
@@ -133,6 +152,10 @@ export interface KeyedString extends ScannedString {
 export interface Edit {
   file: string;
   line: number;
+  /** Provenance from the scanner. Apply refuses edits without a recognised UI-text context. */
+  context: ScannedString['context'];
+  /** The scanned UI field name for attribute and literal edits. */
+  attr?: string;
   before: string;
   after: string;
   key: string;
@@ -152,10 +175,7 @@ export type TranslationStatus =
   | 'manual'
   /** The judge rejected it. Goes back round with the reason attached. */
   | 'rework'
-  /**
-   * Legacy status from versions that stopped after two rejections. Current
-   * versions revive these entries into autonomous rework.
-   */
+  /** Retry ceiling reached; requires a native-speaking owner or explicit reset. */
   | 'needs-human';
 
 export interface MemoryTranslation {
@@ -181,6 +201,9 @@ export interface MemoryEntry {
   namespace: string;
   kind: StringKind;
   file: string;
+  /** Best-known source occurrence, retained for bounded component context. */
+  line?: number;
+  component?: string;
   placeholders: string[];
   firstSeen: string;
   lastSeen: string;
@@ -222,6 +245,8 @@ export interface WorkItem {
   source: string;
   kind: StringKind;
   file: string;
+  line?: number;
+  component?: string;
   placeholders: string[];
   reason: 'new' | 'stale' | 'rework';
   /** The previous translation, when this is a stale or rejected re-translation. */
@@ -240,4 +265,71 @@ export interface Verdict {
   ok: boolean;
   /** Required when ok is false — this is what the next attempt is told. */
   reason?: string;
+}
+
+/** An immutable source/locale unit that crosses translation workflow stages. */
+export interface BatchUnit {
+  key: string;
+  locale: string;
+  source: string;
+  sourceHash: string;
+  contextHash: string;
+  kind: StringKind;
+  file: string;
+  line?: number;
+  component?: string;
+  placeholders: string[];
+  attempt: number;
+}
+
+export interface TranslationBatch {
+  version: 1;
+  id: string;
+  createdAt: string;
+  sourceLocale: string;
+  units: BatchUnit[];
+}
+
+export interface TranslationCandidate {
+  key: string;
+  locale: string;
+  value: string;
+  note?: string;
+  sourceHash: string;
+  candidateHash: string;
+}
+
+export interface TranslationArtifact {
+  version: 1;
+  batchId: string;
+  producer: string;
+  translations: TranslationCandidate[];
+}
+
+export interface BoundVerdict extends Verdict {
+  sourceHash: string;
+  candidateHash: string;
+  /** Mechanical failures are persisted without spending a judge request. */
+  by?: 'guardrail' | 'judge';
+}
+
+export interface VerdictArtifact {
+  version: 1;
+  batchId: string;
+  producer: string;
+  verdicts: BoundVerdict[];
+}
+
+export interface ComponentContext {
+  version: 1;
+  key: string;
+  locale: string;
+  file: string;
+  component?: string;
+  line?: number;
+  startLine: number;
+  endLine: number;
+  excerpt: string;
+  neighborKeys: string[];
+  hash: string;
 }

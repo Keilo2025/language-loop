@@ -70,6 +70,8 @@ export function syncMemory(memory: Memory, strings: KeyedString[], config: Confi
         namespace: s.namespace,
         kind: s.kind,
         file: s.file,
+        line: s.line,
+        component: s.component,
         placeholders: s.placeholders,
         firstSeen: now,
         lastSeen: now,
@@ -81,6 +83,8 @@ export function syncMemory(memory: Memory, strings: KeyedString[], config: Confi
 
     existing.lastSeen = now;
     existing.file = s.file;
+    existing.line = s.line;
+    existing.component = s.component;
     existing.kind = s.kind;
     existing.placeholders = s.placeholders;
 
@@ -216,6 +220,8 @@ export function pendingWork(memory: Memory, config: Config, only?: string[]): Wo
         source: entry.source,
         kind: entry.kind,
         file: entry.file,
+        line: entry.line,
+        component: entry.component,
         placeholders: entry.placeholders,
       };
       const t = entry.translations[locale];
@@ -223,10 +229,7 @@ export function pendingWork(memory: Memory, config: Config, only?: string[]): Wo
         work.push({ ...common, locale, reason: 'new' });
       } else if (t.status === 'stale') {
         work.push({ ...common, locale, reason: 'stale', previous: t.value });
-      } else if (t.status === 'rework' || t.status === 'needs-human') {
-        // `needs-human` is a legacy state from versions that stopped after two
-        // rejections. Revive it so existing projects also use the autonomous
-        // judge loop instead of asking a non-speaker to approve it.
+      } else if (t.status === 'rework') {
         work.push({
           ...common,
           locale,
@@ -249,10 +252,12 @@ export function recordVerdicts(
   memory: Memory,
   verdicts: Verdict[],
   /** The values judged, so a first-time rejection has something to record. */
-  values: Map<string, string>
-): { rework: number; passed: number } {
+  values: Map<string, string>,
+  config: Config
+): { rework: number; passed: number; needsHuman: number } {
   let rework = 0;
   let passed = 0;
+  let needsHumanCount = 0;
 
   for (const verdict of verdicts) {
     const entry = memory.entries[verdict.key];
@@ -283,12 +288,17 @@ export function recordVerdicts(
     translation.judgeNote = verdict.reason?.trim() || 'rejected by the judge, no reason given';
     translation.updatedAt = new Date().toISOString();
 
-    translation.status = 'rework';
-    rework++;
+    if (attempts >= config.ai.maxAttempts) {
+      translation.status = 'needs-human';
+      needsHumanCount++;
+    } else {
+      translation.status = 'rework';
+      rework++;
+    }
   }
 
   memory.updatedAt = new Date().toISOString();
-  return { rework, passed };
+  return { rework, passed, needsHuman: needsHumanCount };
 }
 
 /** Legacy entries written by versions that stopped and waited for a person. */

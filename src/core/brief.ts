@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Config, Memory, WorkItem } from '../types.js';
+import type { Config, Memory, TranslationBatch, WorkItem } from '../types.js';
 import { statePath } from './config.js';
 import { DIALECT_RULE, localeInfo } from './locales.js';
 import type { MarketingLoopState } from './marketing.js';
@@ -23,19 +23,22 @@ export interface BriefInput {
   config: Config;
   memory: Memory;
   work: WorkItem[];
+  batch: TranslationBatch;
   marketing: MarketingLoopState;
   openItems: { file: string; line: number; text: string; reason: string }[];
   frozen: string[];
 }
 
 export function writeBrief(cwd: string, input: BriefInput): { file: string; units: number } {
-  const { config, work, marketing, openItems, frozen } = input;
+  const { config, work, batch: manifest, marketing, openItems, frozen } = input;
   const batch = work.slice(0, config.maxBatch);
+  const manifestById = new Map(manifest.units.map((unit) => [`${unit.key}::${unit.locale}`, unit]));
   const lines: string[] = [];
 
   lines.push('# Translation brief');
   lines.push('');
   lines.push(`Generated ${new Date().toISOString()} by language-loop.`);
+  lines.push(`Batch: \`${manifest.id}\``);
   lines.push('');
   lines.push('You are the translator. Read this whole file, then write `.language-loop/translations.json`');
   lines.push('in the schema at the bottom. Do not edit the catalogues directly — the loop writes those');
@@ -137,6 +140,9 @@ export function writeBrief(cwd: string, input: BriefInput): { file: string; unit
     for (const item of items) {
       lines.push(`- **\`${item.key}\`** · ${item.kind} · \`${item.file}\``);
       lines.push(`  - source: ${JSON.stringify(item.source)}`);
+      const batchUnit = manifestById.get(`${item.key}::${item.locale}`);
+      if (!batchUnit) throw new Error(`Brief item ${item.key}::${item.locale} is not in batch ${manifest.id}.`);
+      lines.push(`  - source hash: \`${batchUnit.sourceHash}\``);
       if (item.placeholders.length) lines.push(`  - placeholders that must survive: ${item.placeholders.map((p) => `\`${p}\``).join(' ')}`);
       if (item.reason === 'stale') {
         lines.push(`  - previous ${locale}: ${JSON.stringify(item.previous ?? '')}`);
@@ -173,10 +179,14 @@ export function writeBrief(cwd: string, input: BriefInput): { file: string; unit
   lines.push('');
   lines.push('```json');
   lines.push('{');
+  lines.push('  "version": 1,');
+  lines.push(`  "batchId": "${manifest.id}",`);
+  lines.push('  "producer": "agent:codex",');
   lines.push('  "translations": [');
   lines.push('    {');
   lines.push('      "key": "hero.getStartedFree",');
   lines.push('      "locale": "de",');
+  lines.push('      "sourceHash": "copy the source hash printed above",');
   lines.push('      "value": "Kostenlos starten",');
   lines.push('      "note": "button — kept to two words so it fits the same width"');
   lines.push('    }');
