@@ -32,20 +32,18 @@ translations back — against the English, and against the component the string 
 and returns a verdict on each. Anything it rejects never reaches your catalogues. It goes
 back to `translate` carrying the reason it failed, and round it goes again.
 
-Two things stop that looping forever. A string gets **two attempts**; after the second
-rejection it stops being re-offered and waits for a person, because a third pass from the
-same model against the same brief is usually the second pass again. And the mechanical
-guardrails run *before* the judge, so tokens are never spent asking for an opinion on a
-translation that is already broken.
+The mechanical guardrails run *before* the judge, so tokens are never spent asking for an
+opinion on a translation that is already broken. The AI judge is the approval authority:
+it approves correct translations on behalf of the vibe coder and returns incorrect ones
+with a concrete correction until they pass.
 
 This exists because of a specific problem: **you probably cannot read the languages you are
 shipping.** A review screen asking you to approve two hundred Russian strings is not
-oversight, it is a rubber stamp. So the loop checks its own work, and what reaches you is
-only what it could not settle — usually a handful, each with a reason attached.
+oversight, it is a rubber stamp. So the loop checks and approves its own work instead of
+handing the decision back to you.
 
 ```bash
-npx language-loop status                  # coverage, plus anything that gave up
-npx language-loop review --ui             # optional: only what needs a decision
+npx language-loop status                  # coverage and autonomous rework
 ```
 
 **Re-runs are cheap.** Memory records what is already translated and the hash of the English
@@ -249,22 +247,11 @@ you are about to add.
 npx language-loop apply
 ```
 
-There is no approval screen in the ordinary workflow. Clean entries go directly to the
-catalogues; flagged or mechanically invalid entries stay out and are offered again on the next
-translation run. Most users cannot meaningfully approve languages they do not speak, while
-placeholder, ICU, brand-term, glossary, and layout checks can make a reliable automated safety
-decision.
-
-If a fluent reviewer is available and you explicitly want an expert pass, the review tools
-remain optional:
-
-```
-npx language-loop review --ui       # local review canvas
-npx language-loop review            # writes review.md with tick boxes
-npx language-loop review --collect  # reads your ticks back
-```
-
-Anything an expert edits is marked `manual` and locked against future automated runs.
+There is no approval screen in the workflow. Guardrail-clean entries go to the AI judge,
+which checks meaning, locale, register and fit against the source component. Correct entries
+are approved on the vibe coder's behalf; rejected entries stay out and return to the
+translator with the reason. Placeholder, ICU, brand-term, glossary, and layout checks remain
+hard mechanical gates.
 
 ### 6. Apply touches catalogues, never code
 
@@ -337,13 +324,12 @@ one, `--list` shows the ids.
 
 ### Slash commands
 
-Agents with invokable commands get three:
+Agents with invokable commands get two:
 
 | command | what it does |
 | --- | --- |
 | `/language-loop` | run the whole loop, agent does the translating |
 | `/i18n-audit` | read-only completeness report with ordered fix suggestions |
-| `/i18n-review` | open the approval canvas |
 
 | agent | command directory |
 | --- | --- |
@@ -391,7 +377,6 @@ You get:
 
 - **`/language-loop`** — the whole loop, with the agent translating
 - **`/i18n-audit`** — a report on what is hardcoded and what has gone stale
-- **`/i18n-review`** — open the approval canvas
 - **`language-loop` skill** — triggers automatically whenever you ask about translation, i18n
   or shipping to a new market
 - **`localization-engineer` subagent** — a localization engineer who opens the file before
@@ -522,7 +507,7 @@ const work = pendingWork(memory, config);
 ```
 
 Every stage is exported, so the loop drops into CI, a git hook, or an MCP server. Automatic
-guardrails are the default; expert review remains available when a fluent reviewer wants it.
+guardrails and the AI judge are the default and require no translation approval from the user.
 
 ---
 

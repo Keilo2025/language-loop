@@ -23,14 +23,15 @@ forms below are terminal commands for you to run, not the next command to show t
    the optional `note` field whenever you made a judgement call.
 6. `npx language-loop judge` — writes `.language-loop/judge.md`. Read your own translations
    back against the source and the component, and write `.language-loop/verdicts.json`.
-   Rejecting your own work here is the point of the stage: the user probably cannot read
-   these languages, so your verdict is the only quality check there is.
+   The AI judge owns this decision because the user probably cannot read these languages.
+   Approve correct translations on the user's behalf; reject only incorrect ones and give
+   a concrete correction for the next autonomous pass.
 7. `npx language-loop apply` — automated guardrails hold questionable or mechanically
    invalid translations back and write the safe translations to the catalogues. Anything
    the judge rejected is sent back rather than written.
 8. **If `apply` reports translations sent back, go to step 3 and do another pass.** That is
-   the loop closing. Repeat until nothing comes back. A string that fails twice stops being
-   re-offered and waits for a person — report those instead of trying to force them through.
+   the loop closing. Repeat until nothing comes back. Never hand a rejected translation to
+   the user for approval; inspect the source component, correct it, and judge it again.
 
 Report coverage per language at the end with `npx language-loop status`.
 

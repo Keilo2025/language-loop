@@ -144,18 +144,17 @@ export type TranslationStatus =
   | 'new'
   /** Source text changed since this translation was made. */
   | 'stale'
-  /** Translated, waiting on a human. */
+  /** Translated, waiting for an automated decision. */
   | 'pending'
-  /** A human approved it. */
+  /** The automated guardrails and AI judge approved it. */
   | 'approved'
   /** A human edited the catalogue by hand. Never overwritten. */
   | 'manual'
   /** The judge rejected it. Goes back round with the reason attached. */
   | 'rework'
   /**
-   * Rejected as many times as the loop is willing to retry. It stops being
-   * re-offered — a third attempt from the same model on the same brief is
-   * usually the same answer — and waits for a person instead.
+   * Legacy status from versions that stopped after two rejections. Current
+   * versions revive these entries into autonomous rework.
    */
   | 'needs-human';
 

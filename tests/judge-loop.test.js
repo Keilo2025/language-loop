@@ -5,16 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { MAX_ATTEMPTS } from '../dist/core/memory.js';
-
 /**
  * The judge closes the loop: translate -> judge -> apply -> back to translate
- * for anything rejected, until it passes or runs out of attempts.
+ * for anything rejected, until the AI judge approves it.
  *
- * The two failures worth testing are the ones that would make it useless. A
- * loop that never terminates burns tokens forever on one string the judge
- * dislikes. A loop that terminates by forgetting drops translations silently.
- * Everything below is aimed at those.
+ * The user is not a fallback reviewer: they usually asked for these languages
+ * precisely because they cannot read them. A rejection must therefore remain
+ * autonomous and visible to the next translation pass.
  */
 function run(dir, args) {
   const result = spawnSync(process.execPath, ['dist/cli.js', ...args, '--cwd', dir], {
@@ -112,31 +109,31 @@ test('a rejection comes back round carrying the reason it failed', () => {
   assert.match(brief, /Do not merely rephrase/);
 });
 
-test('the loop terminates instead of retrying forever', () => {
+test('repeated judge rejections stay in the autonomous loop instead of asking the user to approve', () => {
   const dir = project();
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
     submitAndJudge(dir, `try${attempt}`);
     run(dir, ['apply']);
   }
 
-  // Out of attempts: it stops being offered, so the next translate has nothing.
   const out = run(dir, ['translate']);
-  assert.match(out, /Every key has an approved translation/);
+  assert.match(out, /1 item\(s\) need translating/);
 
   const memory = readMemory(dir);
-  const stuck = Object.values(memory.entries).filter(
-    (entry) => entry.translations['de-DE']?.status === 'needs-human'
+  const rework = Object.values(memory.entries).filter(
+    (entry) => entry.translations['de-DE']?.status === 'rework'
   );
-  assert.equal(stuck.length, 1);
-  assert.equal(stuck[0].translations['de-DE'].attempts, MAX_ATTEMPTS);
+  assert.equal(rework.length, 1);
+  assert.equal(rework[0].translations['de-DE'].attempts, 3);
 
-  // And it surfaces, rather than disappearing quietly.
-  assert.match(run(dir, ['status']), /gave up after 2 attempts and need a human/);
+  const status = run(dir, ['status']);
+  assert.match(status, /sent back by the judge/);
+  assert.doesNotMatch(status, /need a human|waiting on a person|approval/i);
 });
 
-test('new English gives a stuck string a clean slate', () => {
+test('new English resets the autonomous judge history', () => {
   const dir = project();
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
     submitAndJudge(dir, `try${attempt}`);
     run(dir, ['apply']);
   }

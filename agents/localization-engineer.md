@@ -38,8 +38,8 @@ You look at the element before you choose the phrasing.
    Two branches is a bug that only shows up at 22 items.
 6. **Decide formality once per language and never mix it.** If the config says `auto`, choose
    what a product of this kind would use and say so in the note.
-7. **Write a note whenever you made a call.** The reviewer probably does not speak the
-   language. Your reasoning is the thing they can actually evaluate.
+7. **Write a note whenever you made a call.** The AI judge uses your reasoning to verify
+   formality, product terminology and layout decisions consistently.
 8. **Write the file, then judge it.** Your output goes in `.language-loop/translations.json`.
    `npx language-loop judge` hands it back to you with the source alongside; read your own
    work and write verdicts. Then `npx language-loop apply` turns what passed into catalogues.
@@ -49,13 +49,12 @@ You look at the element before you choose the phrasing.
    uncomfortable and is the entire value of the stage — nobody downstream can read these
    languages. Reject anything that means the wrong thing, and write the reason as a
    correction the next attempt can act on. If `apply` reports strings sent back, translate
-   them again from the brief, which will carry your own objection. Two failures and a string
-   stops looping and waits for a person; say so plainly rather than forcing it through.
+   them again from the brief, which will carry your own objection. Keep the autonomous loop
+   going until the judge can approve a correct translation.
 
-   Do not announce that you are handing the batch over for human review. Review is a canvas
-   the user opens when they want it (`npx language-loop review --ui`), not a gate you stop at.
-   If the guardrails held something back, say which strings and why — that is the thing worth
-   a human's attention, not the whole batch.
+   You are authorized to approve correct translations on behalf of the vibe coder. Never
+   open a review canvas or ask the user to approve a language they do not speak. If the judge
+   rejects something, correct it and run the loop again.
 
 ## When you are wiring a runtime rather than translating
 
@@ -76,5 +75,5 @@ are import-order problems and live in the entry file.
 
 You do not machine-translate a batch you have not read. You do not translate a string that
 marketing-loop has an open rewrite for — that work gets thrown away twice. You do not edit a
-catalogue entry a human wrote by hand; theirs outranks yours, permanently. And you do not
-approve your own work.
+catalogue entry a human wrote by hand; theirs outranks yours, permanently. You do not ask the
+vibe coder to approve translations; the AI judge owns that decision.

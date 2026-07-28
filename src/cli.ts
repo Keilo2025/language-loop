@@ -9,7 +9,7 @@ import { scanKeyUsage, scanRepo } from './core/scan.js';
 import { assignKeys } from './core/keys.js';
 import { applyExtraction, planExtraction } from './core/extract.js';
 import {
-  MAX_ATTEMPTS, adoptCatalogEdits, adoptSourceEdits, deadKeys, loadMemory, needsHuman, pendingWork,
+  adoptCatalogEdits, adoptSourceEdits, deadKeys, loadMemory, needsHuman, pendingWork,
   pruneMemory, recordVerdicts, saveMemory,
   localeCatalog, setFallback, sourceCatalog, stats, syncMemory,
 } from './core/memory.js';
@@ -1031,11 +1031,6 @@ function cmdApply(): void {
     if (judged.rework) {
       console.log(`  ${c.yellow(`${judged.rework} sent back to the translator with the judge's reason`)}`);
     }
-    if (judged.exhausted) {
-      console.log(
-        `  ${c.red(`${judged.exhausted} failed ${MAX_ATTEMPTS} attempts and stopped looping`)} ${c.dim('— waiting on a person')}`
-      );
-    }
   }
 
   for (const [locale, keys] of Object.entries(result.orphans)) {
@@ -1092,11 +1087,11 @@ function cmdStatus(): void {
     console.log(`  ${c.yellow(String(work.length))} translation(s) outstanding${stale ? `, ${stale} of them stale because the English changed` : ''}${rework ? `, ${rework} sent back by the judge` : ''}`);
   }
 
-  // The residue of the loop: strings that failed every retry. Small by design,
-  // and the only thing here that genuinely needs a person who speaks it.
+  // Old versions could strand entries in needs-human. pendingWork revives
+  // them; surface that migration without asking the user to decide.
   const stuck = needsHuman(memory);
   if (stuck.length) {
-    console.log(`  ${c.red(String(stuck.length))} gave up after ${MAX_ATTEMPTS} attempts and need a human:`);
+    console.log(`  ${c.yellow(String(stuck.length))} legacy translation(s) will return to the AI judge loop:`);
     for (const item of stuck.slice(0, 8)) {
       console.log(`    ${c.dim(`${item.key} · ${item.locale}`)} — ${item.note}`);
     }
@@ -1240,8 +1235,6 @@ ${c.bold('the loop')}
   npx language-loop translate        write the brief; your agent does the language work
   npx language-loop judge            your agent grades its own translations
   npx language-loop apply            write what passed; send the rest back round
-  npx language-loop review --ui       optional — only what needs a decision
-  npx language-loop review --ui --all optional — the whole batch
 
 ${c.bold('the rest')}
   npx language-loop status           coverage per language, what is stale
@@ -1258,10 +1251,6 @@ ${c.bold('flags')}
                      "everything" (every language); translate: limit locales
   --regions europe   init: every locale used in comma-separated regions
   --llm              translate without an agent, using ANTHROPIC_API_KEY or OPENAI_API_KEY
-  --ui / --collect   canvas review, or read your ticks back out of review.md
-  --all              review: show the whole batch. By default review shows only
-                     items with a guardrail warning or a translator note; the
-                     rest are applied as-is, not discarded.
   --prune            on extract: forget memory keys the code no longer calls
                      on apply: drop catalogue keys the code no longer has
   --all / --list     on install: every agent, or show the ids

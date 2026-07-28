@@ -38,8 +38,7 @@ npx language-loop audit      # read-only completeness report and ordered fixes
 
 `apply` reports how many translations the judge sent back. **If that number is not zero, go
 round again from `translate`** — the brief will contain those strings with the reason each
-one failed. Repeat until nothing comes back. A string that fails twice stops being offered
-and waits for a person; report it rather than trying to force it through.
+one failed. Repeat until nothing comes back. The user is never the fallback approver.
 
 If there is no `language-loop.config.json`, run `npx language-loop init` first. It asks
 which agent the user codes in and which languages they want, and it needs a real terminal.
@@ -76,10 +75,10 @@ only if you use the advantage you have, which is that you can read the code:
    has six. The brief lists them per language.
 5. **Decide formality once per language and hold it.** German `du` and `Sie` cannot both appear
    in one product. If the config says `auto`, pick what a product of this kind would use and
-   note the choice, so the reviewer can overrule it in one place rather than four hundred.
+   note the choice, so the AI judge can verify it consistently across the batch.
 6. **Write a `note` whenever you made a call.** Shortened a button, chose informal address,
-   refused to translate an idiom literally — say so. The note makes automated holdbacks and
-   later expert review easier to understand.
+   refused to translate an idiom literally — say so. The note gives the AI judge the context
+   it needs to verify the choice.
 7. **Write like a native product team.** Translate intent, not word order. Avoid textbook,
    bureaucratic or needlessly formal prose, and use the selected audience locale's vocabulary
    and spelling.
@@ -89,20 +88,23 @@ Write `.language-loop/translations.json` exactly as the brief specifies, then ru
 ## Judging your own work
 
 `judge` writes `.language-loop/judge.md`; you answer with `.language-loop/verdicts.json`.
+You are authorized to approve correct translations on behalf of the vibe coder. They usually
+cannot read the target language, so never ask them to confirm grammar, wording or correctness.
 Only translations that already passed the mechanical guardrails appear there, so the
 question is never "is this broken" — it is "does this say the right thing, in the right
 register, for this place".
 
 Reject your own translation when it means something the English did not, when it reads like
 a textbook rather than a product, when a regional locale got neutral wording, or when it no
-longer fits its slot. Do not reject on taste: every rejection spends one of the two attempts
-that string gets, and a genuinely broken translation may need it.
+longer fits its slot. Do not reject on taste: every rejection costs another autonomous pass
+that should be reserved for a genuinely broken translation.
 
 The reason you write is handed verbatim to the next attempt, so write the correction you
 would want to read — "says cancelled, not failed", not "incorrect".
 
 Then run `apply`. Guardrail failures and judge rejections are held back; everything else is
-written to the catalogues. Do not open the review canvas in the ordinary flow.
+written to the catalogues. If anything returns, correct and judge it again. Never open a
+review canvas or ask the user to approve translations.
 
 ## What you must not do
 
@@ -146,4 +148,3 @@ validates the strings and catalogues that a switcher uses.
 
 - `references/frameworks.md` — how each runtime wants to be wired, and the mistakes specific to each
 - `references/icu.md` — plurals, selects, interpolation, and the rules per language
-- `references/reviewing.md` — optional expert review when a fluent reviewer is available

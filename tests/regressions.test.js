@@ -176,6 +176,7 @@ test('automatic apply holds flagged translations back instead of asking a non-sp
 test('installing the Cursor command records Cursor for future stage handoffs', () => {
   const dir = project({
     'app/page.tsx': 'export default function Page() { return <h1>Hardcoded heading</h1>; }',
+    '.cursor/commands/i18n-review.md': 'Legacy approval canvas command',
   });
   saveConfig(dir, config({ agents: [] }));
 
@@ -192,8 +193,14 @@ test('installing the Cursor command records Cursor for future stage handoffs', (
   const installedCommand = fs.readFileSync(path.join(dir, '.cursor/commands/language-loop.md'), 'utf8');
   const installedRule = fs.readFileSync(path.join(dir, '.cursor/rules/language-loop.mdc'), 'utf8');
   assert.match(installedCommand, /language-loop apply/);
-  assert.doesNotMatch(installedCommand, /review --ui|human approves|approval/i);
-  assert.doesNotMatch(installedRule, /language-loop review|human approves|approval/i);
+  assert.match(installedCommand, /Approve correct translations on the user's behalf/i);
+  assert.doesNotMatch(installedCommand, /review --ui|i18n-review|waits? for (the )?user/i);
+  assert.match(installedRule, /AI judge is the decision-maker/i);
+  assert.doesNotMatch(installedRule, /language-loop review|i18n-review|waits? for (the )?user/i);
+  assert.ok(
+    !fs.existsSync(path.join(dir, '.cursor/commands/i18n-review.md')),
+    'updating the plugin must remove the legacy human-approval command'
+  );
 
   const scan = spawnSync(process.execPath, ['dist/cli.js', 'scan', '--cwd', dir], {
     cwd: process.cwd(),

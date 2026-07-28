@@ -192,20 +192,9 @@ export function adoptCatalogEdits(cwd: string, memory: Memory, config: Config): 
   return adopted;
 }
 
-/** Everything that still needs a translation, for every target locale. */
-/**
- * How many times the loop will re-translate a string the judge rejected before
- * it stops asking. A third attempt from the same model against the same brief
- * is usually the second attempt again, so the cap protects the token budget
- * and turns a stuck string into a small, honest pile for a human.
- */
-export const MAX_ATTEMPTS = 2;
-
 /**
  * New English is a new translation problem. A string that failed the judge
- * twice against the old wording deserves a clean slate against the new one —
- * otherwise it stays stuck at `needs-human` forever for a sentence that no
- * longer exists.
+ * against the old wording deserves a clean slate against the new one.
  */
 function resetForNewSource(translation: MemoryTranslation): void {
   translation.status = 'stale';
@@ -232,9 +221,10 @@ export function pendingWork(memory: Memory, config: Config, only?: string[]): Wo
         work.push({ ...common, locale, reason: 'new' });
       } else if (t.status === 'stale') {
         work.push({ ...common, locale, reason: 'stale', previous: t.value });
-      } else if (t.status === 'rework') {
-        // 'needs-human' is deliberately absent: it has had its retries and is
-        // waiting on a person, not on another pass.
+      } else if (t.status === 'rework' || t.status === 'needs-human') {
+        // `needs-human` is a legacy state from versions that stopped after two
+        // rejections. Revive it so existing projects also use the autonomous
+        // judge loop instead of asking a non-speaker to approve it.
         work.push({
           ...common,
           locale,
@@ -251,16 +241,15 @@ export function pendingWork(memory: Memory, config: Config, only?: string[]): Wo
 
 /**
  * Record what the judge decided. A rejection does not reach the catalogues; it
- * goes back to `rework` with the reason, until it runs out of attempts.
+ * goes back to `rework` with the reason until the AI judge approves it.
  */
 export function recordVerdicts(
   memory: Memory,
   verdicts: Verdict[],
   /** The values judged, so a first-time rejection has something to record. */
   values: Map<string, string>
-): { rework: number; exhausted: number; passed: number } {
+): { rework: number; passed: number } {
   let rework = 0;
-  let exhausted = 0;
   let passed = 0;
 
   for (const verdict of verdicts) {
@@ -292,22 +281,15 @@ export function recordVerdicts(
     translation.judgeNote = verdict.reason?.trim() || 'rejected by the judge, no reason given';
     translation.updatedAt = new Date().toISOString();
 
-    // >= not >: MAX_ATTEMPTS counts attempts made, not retries allowed. At two
-    // rejections the string has had its two goes and stops being re-offered.
-    if (attempts >= MAX_ATTEMPTS) {
-      translation.status = 'needs-human';
-      exhausted++;
-    } else {
-      translation.status = 'rework';
-      rework++;
-    }
+    translation.status = 'rework';
+    rework++;
   }
 
   memory.updatedAt = new Date().toISOString();
-  return { rework, exhausted, passed };
+  return { rework, passed };
 }
 
-/** Everything that ran out of retries and is waiting on a person. */
+/** Legacy entries written by versions that stopped and waited for a person. */
 export function needsHuman(memory: Memory): { key: string; locale: string; value: string; note: string }[] {
   const out: { key: string; locale: string; value: string; note: string }[] = [];
   for (const [key, entry] of Object.entries(memory.entries)) {
