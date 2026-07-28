@@ -182,6 +182,8 @@ require effort:
   correct translations on the user's behalf, and sends incorrect ones around again.
 - Do not stop after a rejection. Continue \`translate\` → \`judge\` → \`apply\` until the
   judge approves every guardrail-clean translation in the batch.
+- Continue immediately across every batch and locale. Finish one language before moving
+  to the next, and do not hand control back to the user while translation work remains.
 - Never invent a key. Keys come from \`extract\`.
 - Do not translate a string \`marketing-loop\` has an open rewrite for. The loop already
   excludes these; do not work around it.
@@ -225,6 +227,9 @@ forms below are terminal commands for you to run, not the next command to show t
 8. **If \`apply\` reports translations sent back, go to step 3 and do another pass.** That is
    the loop closing. Repeat until nothing comes back. Never hand a rejected translation to
    the user for approval; inspect the source component, correct it, and judge it again.
+9. **Continue immediately across every batch and locale.** Finish all outstanding strings
+   for one language before moving to the next. Do not stop, summarize, or ask the user to
+   invoke \`/language-loop\` again while \`translate\` still reports work.
 
 Report coverage per language at the end with \`npx language-loop status\`.
 

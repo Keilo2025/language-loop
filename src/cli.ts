@@ -16,11 +16,7 @@ import {
 import { writeBrief } from './core/brief.js';
 import { writeJudgeBrief } from './core/judge.js';
 import { checkTranslations, partition } from './core/guardrails.js';
-import {
-  collectReviewMarkdown, loadDecisions, saveDecisions, serveReview, unitId, writeReviewMarkdown,
-  type Decision,
-} from './core/review.js';
-import { applyDecisions } from './core/apply.js';
+import { applyDecisions, type Decision } from './core/apply.js';
 import { detectMarketingLoop, frozenTexts, marketingLoopPitch } from './core/marketing.js';
 import { AGENTS, detectAgents, installAgents, uninstallAgents } from './core/install.js';
 import { wireRuntime } from './core/wire.js';
@@ -51,6 +47,10 @@ function valueOf(name: string): string | undefined {
   const i = argv.indexOf(name);
   if (i !== -1 && argv[i + 1] && !argv[i + 1]!.startsWith('--')) return argv[i + 1];
   return undefined;
+}
+
+function unitId(key: string, locale: string): string {
+  return `${key}::${locale}`;
 }
 
 function listOf(name: string): string[] {
@@ -123,7 +123,6 @@ async function main(): Promise<void> {
     case 'extract': return cmdExtract();
     case 'translate': return cmdTranslate();
     case 'judge': return cmdJudge();
-    case 'review': return cmdReview();
     case 'apply': return cmdApply();
     case 'status': return cmdStatus();
     case 'doctor': return cmdDoctor();
@@ -605,7 +604,12 @@ async function cmdTranslate(): Promise<void> {
   // counts on screen and the LLM request. They used to disagree — the brief was
   // truncated to maxBatch while the count and the token budget were sized off
   // the full backlog.
-  const batch = usable.slice(0, config.maxBatch);
+  // Keep each brief to one locale. Besides matching the user's mental model
+  // of a language-by-language loop, this lets the judge hold one register and
+  // terminology set in context instead of switching languages every item.
+  const activeLocale = usable[0]!.locale;
+  const activeLocaleWork = usable.filter((item) => item.locale === activeLocale);
+  const batch = activeLocaleWork.slice(0, config.maxBatch);
   const heldBack = usable.length - batch.length;
 
   const brief = writeBrief(cwd, {
@@ -667,7 +671,7 @@ async function runLlm(config: Config, work: ReturnType<typeof pendingWork>): Pro
   const result = await translateWithLlm(cwd, work, config);
   writeJson(statePath(cwd, 'translations.json'), { translations: result.translations, model: result.model });
   console.log(`  ${c.green('+')} .language-loop/translations.json  ${c.dim(`(${result.translations.length} from ${result.model})`)}`);
-  nextStep([commandForStage(config, 'apply') + '  ' + c.dim('# validate and write the catalogues')]);
+  nextStep([commandForStage(config, 'judge') + '  ' + c.dim('# AI-check meaning, register and fit')]);
 }
 
 /**
@@ -740,201 +744,14 @@ function cmdJudge(): void {
   ]);
 }
 
-async function cmdReview(): Promise<void> {
-  const config = requireConfig(cwd);
-  const memory = loadMemory(cwd, config.sourceLocale);
-
-  if (flags.has('--collect')) {
-    const collected = collectReviewMarkdown(cwd);
-
-    // The canvas re-checks whatever the reviewer typed; markdown used to go
-    // straight through. A human editing a `to:` line can drop a {count} just as
-    // easily as a model can, so the same guardrails apply to both paths.
-    const edited: TranslationUnit[] = [];
-    for (const decision of Object.values(collected)) {
-      const entry = memory.entries[decision.key];
-      if (!entry) continue;
-      edited.push({
-        key: decision.key,
-        locale: decision.locale,
-        source: entry.source,
-        value: decision.value,
-        kind: entry.kind,
-        file: entry.file,
-        placeholders: entry.placeholders,
-        status: 'pending',
-      });
-    }
-    const blocking = checkTranslations(edited, config).filter((i) => i.severity === 'block');
-    const bad = new Set(blocking.map((i) => unitId(i.key, i.locale)));
-
-    // Start from whatever is already on disk: under `review --flagged` that is
-    // the auto-approved remainder the reviewer was never shown, and dropping it
-    // here would quietly discard most of the batch.
-    const decisions: Record<string, Decision> = { ...loadDecisions(cwd) };
-    for (const [id, decision] of Object.entries(collected)) {
-      if (decision.approved && bad.has(id)) continue;
-      decisions[id] = decision;
-    }
-    saveDecisions(cwd, decisions);
-
-    const approved = Object.values(decisions).filter((d) => d.approved).length;
-    heading(`collected ${Object.keys(decisions).length} decision(s)`);
-    console.log(`  ${c.green(String(approved))} approved, ${c.dim(String(Object.keys(decisions).length - approved))} rejected`);
-    if (bad.size) {
-      console.log(c.red(`  ${bad.size} approved edit(s) held back — they break something mechanically:`));
-      for (const issue of blocking.slice(0, 8)) {
-        console.log(`    ${c.dim(`${issue.key} · ${issue.locale}`)} — ${issue.message}`);
-      }
-      console.log(c.dim('  Fix the `to:` line in review.md and run --collect again.'));
-    }
-    nextStep([commandForStage(config, 'apply')]);
-    return;
-  }
-
-  const file = statePath(cwd, 'translations.json');
-  if (!exists(file)) {
-    throw new Error(
-      'No .language-loop/translations.json.\n' +
-        `Run  ${commandForStage(config, 'translate')}  first, then read the brief and write that file.`
-    );
-  }
-
-  const raw = readJson<{ translations?: { key: string; locale: string; value: string; note?: string }[] }>(file, {});
-  const incoming = raw.translations ?? [];
-  if (!incoming.length) throw new Error('translations.json has no "translations" array, or it is empty.');
-
-  // A key may appear twice if the translator revised its own answer. Last wins,
-  // rather than showing the reviewer the same decision twice.
-  const byId = new Map<string, (typeof incoming)[number]>();
-  for (const item of incoming) byId.set(`${item.key}::${item.locale}`, item);
-
-  const units: TranslationUnit[] = [];
-  const unknown: string[] = [];
-  for (const item of byId.values()) {
-    const entry = memory.entries[item.key];
-    if (!entry) {
-      unknown.push(item.key);
-      continue;
-    }
-    units.push({
-      key: item.key,
-      locale: item.locale,
-      source: entry.source,
-      value: item.value,
-      kind: entry.kind,
-      file: entry.file,
-      placeholders: entry.placeholders,
-      status: entry.translations[item.locale]?.status === 'stale' ? 'stale' : 'pending',
-      notes: item.note,
-    });
-  }
-
-  const issues = checkTranslations(units, config);
-  const { kept, blocked, flagged } = partition(units, issues);
-
-  heading(`${units.length} translation(s) came back`);
-  if (unknown.length) {
-    console.log(c.yellow(`  ${unknown.length} for key(s) that do not exist — ignored: ${unknown.slice(0, 5).join(', ')}`));
-  }
-  if (blocked.length) {
-    console.log(c.red(`  ${blocked.length} blocked by guardrails before you see them:`));
-    for (const { unit, issues: unitIssues } of blocked.slice(0, 8)) {
-      console.log(`    ${c.dim(`${unit.key} · ${unit.locale}`)} — ${unitIssues.map((i) => i.message).join('; ')}`);
-    }
-  }
-  if (flagged.size) console.log(c.yellow(`  ${flagged.size} flagged for a closer look`));
-  console.log(`  ${c.green(String(kept.length))} ready for you`);
-
-  // Nobody speaks nine languages. Asking someone to approve 200 strings they
-  // cannot read produces a rubber stamp, not a review — so --flagged narrows
-  // the canvas to the items where a judgement was actually made: a guardrail
-  // warning, or a note the translator left explaining a call they had to take.
-  // Flagged-only is the default. The person running this cannot read most of
-  // these languages, so a canvas of 200 strings is a scrolling exercise, not a
-  // review. `--all` is there for the case where someone genuinely can read them.
-  const onlyDecisions = !flags.has('--all');
-  const reviewable = onlyDecisions
-    ? kept.filter((unit) => flagged.has(unitId(unit.key, unit.locale)) || Boolean(unit.notes?.trim()))
-    : kept;
-
-  if (onlyDecisions) {
-    const hidden = kept.length - reviewable.length;
-    console.log(
-      c.dim(`  showing ${reviewable.length} that need a decision; the other ${hidden} are guardrail-clean and will be applied as-is`)
-    );
-    if (hidden) console.log(c.dim(`  ${commandForStage(config, 'review --ui --all')} shows the whole batch instead`));
-  }
-
-  if (onlyDecisions && !reviewable.length) {
-    heading('nothing needs you');
-    console.log(c.dim('  Every translation is guardrail-clean and none needed a judgement call.'));
-    nextStep([commandForStage(config, 'apply')]);
-    return;
-  }
-
-  // The clean, unshown remainder still has to reach the catalogues. `apply`
-  // stops auto-approving the moment decisions.json exists, so these ride along
-  // with whatever the reviewer decides.
-  const carry: Record<string, Decision> = onlyDecisions
-    ? Object.fromEntries(
-        kept
-          .filter((unit) => !reviewable.includes(unit))
-          .map((unit) => [
-            unitId(unit.key, unit.locale),
-            {
-              key: unit.key,
-              locale: unit.locale,
-              approved: true,
-              value: unit.value,
-              editedByHuman: false,
-            } satisfies Decision,
-          ])
-      )
-    : {};
-
-  const bundle = { units: reviewable, issues: flagged, blocked, carry };
-
-  if (!flags.has('--ui')) {
-    // Written up front so `review --collect` has something to merge into —
-    // the markdown round trip does not know this run was narrowed.
-    if (onlyDecisions) saveDecisions(cwd, carry);
-    const md = writeReviewMarkdown(cwd, bundle, config, memory);
-    heading('markdown review');
-    console.log(`  ${c.green('+')} ${md}`);
-    nextStep([
-      'tick the boxes, edit any "to:" line you disagree with, then:',
-      commandForStage(config, 'review --collect'),
-      commandForStage(config, 'apply'),
-    ]);
-    return;
-  }
-
-  const port = Number.parseInt(valueOf('--port') ?? '4747', 10);
-  const server = await serveReview(cwd, bundle, config, memory, port);
-  heading('review canvas');
-  console.log(`  ${c.cyan(server.url)}`);
-  console.log(c.dim('  j/k to move, a to approve, r to reject. Edit any translation directly.'));
-  console.log(c.dim('  Your job is the decisions, not the grammar: does the button still fit, did the'));
-  console.log(c.dim('  brand name survive, is the formality right for this product.'));
-  console.log('');
-  console.log(c.dim('  Waiting for you to hit Save…'));
-
-  const decisions = await server.done;
-  server.close();
-  const approved = Object.values(decisions).filter((d) => d.approved).length;
-  console.log(`\n  ${c.green(String(approved))} approved, ${c.dim(String(Object.keys(decisions).length - approved))} rejected`);
-  nextStep([commandForStage(config, 'apply')]);
-}
-
 function cmdApply(): void {
   const config = requireConfig(cwd);
   const memory = loadMemory(cwd, config.sourceLocale);
-  let decisions = loadDecisions(cwd);
+  // decisions.json belonged to the removed human review canvas. Never let a
+  // stale saved click override the AI judge after an upgrade.
+  let decisions: Record<string, Decision> = {};
   let heldBack = 0;
 
-  // Verdicts are optional: `judge` is a stage you can skip, and skipping it
-  // leaves apply behaving exactly as it did before the judge existed.
   const verdictFile = statePath(cwd, 'verdicts.json');
   const verdicts = exists(verdictFile)
     ? (readJson<{ verdicts?: Verdict[] }>(verdictFile, {}).verdicts ?? [])
@@ -982,8 +799,22 @@ function cmdApply(): void {
     const unsafe = new Set(issues.map((issue) => unitId(issue.key, issue.locale)));
     heldBack += unsafe.size;
 
-    // A verdict outranks a clean guardrail run: the rules only prove a string
-    // is not broken, the judge is the one that read what it actually says.
+    // Guardrails prove only that a string is mechanically safe. Every survivor
+    // needs an explicit AI verdict before it can reach a catalogue.
+    const verdictById = new Map(
+      verdicts.map((verdict) => [unitId(verdict.key, verdict.locale), verdict])
+    );
+    const unjudged = units.filter((unit) => {
+      const id = unitId(unit.key, unit.locale);
+      return !unsafe.has(id) && !verdictById.has(id);
+    });
+    if (unjudged.length) {
+      throw new Error(
+        `AI judge verdicts missing for ${unjudged.length} guardrail-clean translation(s).\n` +
+          `Run  ${commandForStage(config, 'judge')}  and write .language-loop/verdicts.json before apply.`
+      );
+    }
+
     const rejected = new Set(
       verdicts.filter((verdict) => !verdict.ok).map((verdict) => unitId(verdict.key, verdict.locale))
     );
@@ -1042,11 +873,14 @@ function cmdApply(): void {
     fs.rmSync(statePath(cwd, 'translations.json'), { force: true });
     console.log(`\n  ${c.dim(`${commandForStage(config, 'revert')}  undoes this`)}`);
     // The loop closes here: anything the judge sent back is pending again, so
-    // the next `translate` picks it up with the reason attached.
+    // the next `translate` picks it up with the reason attached. The same is
+    // true for the rest of a large backlog: do not hand the loop back to the
+    // user between batches or languages.
+    const remaining = pendingWork(memory, config);
     nextStep(
-      judged?.rework
+      remaining.length
         ? [
-            `${judged.rework} translation(s) need another pass:`,
+            `${remaining.length} translation(s) remain; continue the autonomous loop:`,
             commandForStage(config, 'translate'),
           ]
         : [commandForStage(config, 'status') + '  ' + c.dim('# coverage per language')]

@@ -38,7 +38,9 @@ npx language-loop audit      # read-only completeness report and ordered fixes
 
 `apply` reports how many translations the judge sent back. **If that number is not zero, go
 round again from `translate`** — the brief will contain those strings with the reason each
-one failed. Repeat until nothing comes back. The user is never the fallback approver.
+one failed. Repeat until nothing comes back. Continue across every batch and locale without
+handing the loop back to the user. Finish one language before starting the next. The user is
+never the fallback approver.
 
 If there is no `language-loop.config.json`, run `npx language-loop init` first. It asks
 which agent the user codes in and which languages they want, and it needs a real terminal.

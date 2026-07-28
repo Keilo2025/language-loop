@@ -3,16 +3,22 @@ import type { Config, Memory } from '../types.js';
 import { Backup } from './backup.js';
 import { localeCatalog, recordTranslation, sourceCatalog, saveMemory } from './memory.js';
 import { readCatalog, writeCatalog, orphanKeys } from './catalog.js';
-import type { Decision } from './review.js';
 
 /**
  * Write the catalogues.
  *
  * Only accepted translations get through, and only into catalogue files —
  * `apply` never touches source code. Automatic intake accepts guardrail-clean
- * entries; an optional human edit is stored as `manual`, which means no later
- * run will overwrite it, however confident that run is.
+ * entries approved by the AI judge.
  */
+
+export interface Decision {
+  key: string;
+  locale: string;
+  approved: boolean;
+  value: string;
+  editedByHuman: boolean;
+}
 
 export interface ApplyResult {
   written: string[];

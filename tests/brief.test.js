@@ -50,6 +50,6 @@ test('translation brief asks for natural audience-locale product language', () =
   assert.match(brief, /native user would expect in a modern app/i);
   assert.match(brief, /avoid textbook, bureaucratic, or overly formal/i);
   assert.match(brief, /Brazilian Portuguese vocabulary and spelling/i);
-  assert.match(brief, /\/language-loop apply/);
+  assert.match(brief, /\/language-loop judge/);
   assert.doesNotMatch(brief, /i18n-review|review --ui|human approves/i);
 });

@@ -206,16 +206,18 @@ export function pendingWork(memory: Memory, config: Config, only?: string[]): Wo
   const work: WorkItem[] = [];
   const locales = only?.length ? only : config.locales;
 
-  for (const [key, entry] of Object.entries(memory.entries)) {
-    const common = {
-      key,
-      source: entry.source,
-      kind: entry.kind,
-      file: entry.file,
-      placeholders: entry.placeholders,
-    };
-    for (const locale of locales) {
-      if (locale === config.sourceLocale) continue;
+  // Locale first is intentional: the autonomous loop finishes one language
+  // before moving to the next, keeping register and terminology consistent.
+  for (const locale of locales) {
+    if (locale === config.sourceLocale) continue;
+    for (const [key, entry] of Object.entries(memory.entries)) {
+      const common = {
+        key,
+        source: entry.source,
+        kind: entry.kind,
+        file: entry.file,
+        placeholders: entry.placeholders,
+      };
       const t = entry.translations[locale];
       if (!t) {
         work.push({ ...common, locale, reason: 'new' });

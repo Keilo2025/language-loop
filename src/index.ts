@@ -2,9 +2,8 @@
  * Programmatic access to every stage of the loop.
  *
  * The stages are exported separately on purpose: the loop drops into CI, a git
- * hook or an MCP server one piece at a time. Automated guardrails keep broken
- * or questionable translations out; the review canvas remains available as
- * an optional expert tool.
+ * hook or an MCP server one piece at a time. Automated guardrails and the AI
+ * judge keep broken or questionable translations out.
  */
 
 export type {
@@ -25,9 +24,6 @@ export { readCatalog, writeCatalog, flatten, nest, missingKeys, orphanKeys } fro
 export { writeBrief } from './core/brief.js';
 export { checkTranslations, partition } from './core/guardrails.js';
 export { applyDecisions } from './core/apply.js';
-export {
-  writeReviewMarkdown, collectReviewMarkdown, serveReview, loadDecisions, saveDecisions,
-} from './core/review.js';
 export { detectMarketingLoop, marketingLoopPitch, frozenTexts } from './core/marketing.js';
 export { installAgents, uninstallAgents, detectAgents, AGENTS } from './core/install.js';
 export { wireRuntime } from './core/wire.js';

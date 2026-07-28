@@ -23,7 +23,6 @@ export type SuggestedAction =
   | 'extract'
   | 'manual-extract'
   | 'translate'
-  | 'review'
   | 'apply'
   | 'retranslate'
   | 'prune'
@@ -63,7 +62,6 @@ const ACTION_ORDER: SuggestedAction[] = [
   'setup',
   'translate',
   'retranslate',
-  'review',
   'apply',
   'prune',
 ];
@@ -217,10 +215,10 @@ export function analyzeCompleteness(cwd: string, config: Config): CompletenessRe
       findings.push(localeFinding(
         'pending',
         'warn',
-        `${locale} has ${pending.length} translation(s) waiting for review.`,
+        `${locale} has ${pending.length} legacy pending translation(s) to return to the autonomous loop.`,
         locale,
         pending,
-        'review'
+        'translate'
       ));
     }
     if (unapplied.length) {

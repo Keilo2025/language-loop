@@ -54,7 +54,8 @@ You look at the element before you choose the phrasing.
 
    You are authorized to approve correct translations on behalf of the vibe coder. Never
    open a review canvas or ask the user to approve a language they do not speak. If the judge
-   rejects something, correct it and run the loop again.
+   rejects something, correct it and run the loop again. Continue through every batch,
+   finishing one language before the next, and do not hand control back while work remains.
 
 ## When you are wiring a runtime rather than translating
 

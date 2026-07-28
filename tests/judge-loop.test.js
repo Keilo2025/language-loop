@@ -40,6 +40,41 @@ function project() {
   return dir;
 }
 
+function batchedProject(maxBatch = 1) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'll-batched-'));
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 't', dependencies: { next: '14' } }));
+  fs.mkdirSync(path.join(dir, 'app'));
+  fs.writeFileSync(
+    path.join(dir, 'app', 'page.jsx'),
+    'export default function P(){return <div><h1>Welcome back</h1><button>Get started free</button></div>}'
+  );
+  run(dir, ['init', '--source', 'en-US', '--locales', 'de-DE,fr-FR', '--agents', 'cursor']);
+  run(dir, ['scan']);
+  run(dir, ['extract']);
+  const configFile = path.join(dir, 'language-loop.config.json');
+  const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+  config.maxBatch = maxBatch;
+  fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
+  run(dir, ['translate']);
+  return dir;
+}
+
+function approveCurrentBrief(dir) {
+  const brief = fs.readFileSync(statePath(dir, 'brief.md'), 'utf8');
+  const locale = /^### ([^\s]+)/m.exec(brief)?.[1];
+  const key = /- \*\*`([^`]+)`\*\*/.exec(brief)?.[1];
+  assert.ok(locale && key, 'the current one-item brief must identify a locale and key');
+  fs.writeFileSync(
+    statePath(dir, 'translations.json'),
+    JSON.stringify({ translations: [{ key, locale, value: `${locale} translated` }] }, null, 2)
+  );
+  fs.writeFileSync(
+    statePath(dir, 'verdicts.json'),
+    JSON.stringify({ verdicts: [{ key, locale, ok: true }] }, null, 2)
+  );
+  return { locale, key };
+}
+
 /** Translate everything outstanding, then reject the first and pass the rest. */
 function submitAndJudge(dir, label, { rejectFirst = true } = {}) {
   const memory = readMemory(dir);
@@ -109,6 +144,38 @@ test('a rejection comes back round carrying the reason it failed', () => {
   assert.match(brief, /Do not merely rephrase/);
 });
 
+test('apply continues to the next batch instead of handing the loop back to the user', () => {
+  const dir = batchedProject();
+  approveCurrentBrief(dir);
+
+  const out = run(dir, ['apply']);
+
+  assert.match(out, /\/language-loop translate/);
+  assert.doesNotMatch(out, /\/language-loop status/);
+});
+
+test('each translation batch contains only one language', () => {
+  const dir = batchedProject(200);
+  const brief = fs.readFileSync(statePath(dir, 'brief.md'), 'utf8');
+
+  assert.match(brief, /## To translate — 2 item\(s\)/);
+  assert.match(brief, /^### de-DE/m);
+  assert.doesNotMatch(brief, /^### fr-FR/m);
+});
+
+test('the loop finishes one language before starting the next', () => {
+  const dir = batchedProject();
+  const first = approveCurrentBrief(dir);
+  assert.equal(first.locale, 'de-DE');
+  run(dir, ['apply']);
+
+  run(dir, ['translate']);
+  const nextBrief = fs.readFileSync(statePath(dir, 'brief.md'), 'utf8');
+
+  assert.match(nextBrief, /^### de-DE/m);
+  assert.doesNotMatch(nextBrief, /^### fr-FR/m);
+});
+
 test('repeated judge rejections stay in the autonomous loop instead of asking the user to approve', () => {
   const dir = project();
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -152,7 +219,7 @@ test('new English resets the autonomous judge history', () => {
   assert.equal(revived.attempts, undefined, 'the attempt count must reset with new English');
 });
 
-test('apply without verdicts behaves exactly as it did before the judge existed', () => {
+test('apply refuses to bypass the AI judge for a guardrail-clean batch', () => {
   const dir = project();
   const memory = readMemory(dir);
   const translations = Object.entries(memory.entries).map(([key, entry]) => ({
@@ -162,8 +229,13 @@ test('apply without verdicts behaves exactly as it did before the judge existed'
   }));
   fs.writeFileSync(statePath(dir, 'translations.json'), JSON.stringify({ translations }, null, 2));
 
-  const out = run(dir, ['apply']);
-  assert.match(out, /2 guardrail-clean translation\(s\) written/);
-  assert.doesNotMatch(out, /sent back/);
-  assert.doesNotMatch(out, /stopped looping/);
+  const result = spawnSync(process.execPath, ['dist/cli.js', 'apply', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AI judge verdicts? missing/);
+  const catalog = JSON.parse(fs.readFileSync(path.join(dir, 'messages', 'de-DE.json'), 'utf8'));
+  assert.ok(!JSON.stringify(catalog).includes('DE '));
 });

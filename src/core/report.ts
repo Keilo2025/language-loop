@@ -93,7 +93,6 @@ export function nextStep(lines: string[]): void {
 
 export function commandForStage(config: Pick<Config, 'agents'>, stage: string): string {
   if (!config.agents.includes('cursor')) return `npx language-loop ${stage}`;
-  if (stage === 'review --ui') return '/i18n-review';
   if (stage === 'audit') return '/i18n-audit';
   return `/language-loop ${stage}`;
 }
@@ -105,7 +104,6 @@ export function commandForAction(config: Config, action: SuggestedAction): strin
     setup: 'init',
     translate: 'translate',
     retranslate: 'translate',
-    review: 'review --ui',
     apply: 'apply',
     prune: 'extract --prune',
   };

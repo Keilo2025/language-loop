@@ -35,7 +35,8 @@ back to `translate` carrying the reason it failed, and round it goes again.
 The mechanical guardrails run *before* the judge, so tokens are never spent asking for an
 opinion on a translation that is already broken. The AI judge is the approval authority:
 it approves correct translations on behalf of the vibe coder and returns incorrect ones
-with a concrete correction until they pass.
+with a concrete correction until they pass. The loop continues through every batch without
+another user invocation, finishing one language before moving to the next.
 
 This exists because of a specific problem: **you probably cannot read the languages you are
 shipping.** A review screen asking you to approve two hundred Russian strings is not

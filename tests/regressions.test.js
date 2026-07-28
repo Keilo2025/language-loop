@@ -93,7 +93,6 @@ test('Cursor users are sent to the slash command after scanning', () => {
 test('Cursor stage handoffs consistently use installed slash commands', () => {
   const cursor = config({ agents: ['cursor'] });
   assert.equal(commandForStage(cursor, 'scan'), '/language-loop scan');
-  assert.equal(commandForStage(cursor, 'review --ui'), '/i18n-review');
   assert.equal(commandForStage(cursor, 'audit'), '/i18n-audit');
   assert.equal(commandForStage(config({ agents: ['codex'] }), 'scan'), 'npx language-loop scan');
 });
@@ -122,6 +121,9 @@ test('apply accepts a guardrail-clean translated batch without opening human rev
       locale: 'de',
       value: 'Hallo Welt',
     }],
+  }));
+  fs.writeFileSync(path.join(dir, '.language-loop/verdicts.json'), JSON.stringify({
+    verdicts: [{ key: 'common.helloWorld', locale: 'de', ok: true }],
   }));
 
   const run = spawnSync(process.execPath, ['dist/cli.js', 'apply', '--cwd', dir], {
@@ -171,6 +173,92 @@ test('automatic apply holds flagged translations back instead of asking a non-sp
   assert.equal(readCatalog(dir, cfg, 'de')['common.sourceCodeFragment'], undefined);
   assert.match(run.stdout, /held back/i);
   assert.doesNotMatch(run.stdout, /review --ui|i18n-review|approve something/i);
+});
+
+test('the removed review command cannot create a human approval flow', () => {
+  const dir = project({});
+  const cfg = config();
+  saveConfig(dir, cfg);
+  const memory = emptyMemory();
+  memory.entries['common.helloWorld'] = {
+    source: 'Hello world',
+    sourceHash: 'current-hash',
+    namespace: 'common',
+    kind: 'body',
+    file: 'app/page.tsx',
+    placeholders: [],
+    firstSeen: '',
+    lastSeen: '',
+    translations: {},
+  };
+  saveMemory(dir, memory);
+  fs.mkdirSync(path.join(dir, '.language-loop'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.language-loop/translations.json'), JSON.stringify({
+    translations: [{
+      key: 'common.helloWorld',
+      locale: 'de',
+      value: 'Hallo Welt',
+    }],
+  }));
+
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'review', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /Unknown command: review/);
+  assert.ok(!fs.existsSync(path.join(dir, '.language-loop/review.md')));
+  assert.ok(!fs.existsSync(path.join(dir, '.language-loop/decisions.json')));
+});
+
+test('apply ignores legacy human review decisions in favor of the AI judge', () => {
+  const dir = project({});
+  const cfg = config();
+  saveConfig(dir, cfg);
+  const memory = emptyMemory();
+  memory.entries['common.helloWorld'] = {
+    source: 'Hello world',
+    sourceHash: 'current-hash',
+    namespace: 'common',
+    kind: 'body',
+    file: 'app/page.tsx',
+    placeholders: [],
+    firstSeen: '',
+    lastSeen: '',
+    translations: {},
+  };
+  saveMemory(dir, memory);
+  fs.mkdirSync(path.join(dir, '.language-loop'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.language-loop/translations.json'), JSON.stringify({
+    translations: [{ key: 'common.helloWorld', locale: 'de', value: 'Falsche Übersetzung' }],
+  }));
+  fs.writeFileSync(path.join(dir, '.language-loop/verdicts.json'), JSON.stringify({
+    verdicts: [{
+      key: 'common.helloWorld',
+      locale: 'de',
+      ok: false,
+      reason: 'does not match the English meaning',
+    }],
+  }));
+  fs.writeFileSync(path.join(dir, '.language-loop/decisions.json'), JSON.stringify({
+    'common.helloWorld::de': {
+      key: 'common.helloWorld',
+      locale: 'de',
+      approved: true,
+      value: 'Falsche Übersetzung',
+      editedByHuman: true,
+    },
+  }));
+
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'apply', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(readCatalog(dir, cfg, 'de')['common.helloWorld'], undefined);
+  assert.equal(loadMemory(dir, 'en').entries['common.helloWorld'].translations.de.status, 'rework');
 });
 
 test('installing the Cursor command records Cursor for future stage handoffs', () => {

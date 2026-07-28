@@ -190,7 +190,7 @@ export function writeBrief(cwd: string, input: BriefInput): { file: string; unit
   lines.push('Then run:');
   lines.push('');
   lines.push('```');
-  lines.push(`${commandForStage(config, 'apply')}   # validate and write the catalogues`);
+  lines.push(`${commandForStage(config, 'judge')}   # AI-check meaning, register and fit`);
   lines.push('```');
   lines.push('');
 
