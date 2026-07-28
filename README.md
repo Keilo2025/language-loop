@@ -45,7 +45,7 @@ only what it could not settle — usually a handful, each with a reason attached
 
 ```bash
 npx language-loop status                  # coverage, plus anything that gave up
-npx language-loop review --ui --flagged   # optional: only what needs a decision
+npx language-loop review --ui             # optional: only what needs a decision
 ```
 
 **Re-runs are cheap.** Memory records what is already translated and the hash of the English
@@ -155,6 +155,10 @@ your codebase
 ┌────────────┐
 │ guardrails │  questionable or invalid translations are held back automatically
 └─────┬──────┘
+      ▼
+┌────────────┐
+│   judge    │  the agent reads its own work back: does it say the right thing?
+└─────┬──────┘     rejections go back to the brief with the reason attached
       ▼
 ┌────────────┐
 │   apply    │  catalogues only · never source code · one-command revert

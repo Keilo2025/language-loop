@@ -644,11 +644,21 @@ async function cmdTranslate(): Promise<void> {
     return runLlm(config, batch);
   }
 
+  // A new brief means a new batch, which makes every review artefact on disk
+  // describe translations that no longer exist. Leaving them lets `--collect`
+  // read an abandoned review.md and apply hundreds of decisions belonging to a
+  // previous run — rejections included.
+  const staleReview = ['review.md', 'decisions.json'].filter((file) => exists(statePath(cwd, file)));
+  if (staleReview.length) {
+    for (const file of staleReview) fs.rmSync(statePath(cwd, file), { force: true });
+    console.log(c.dim(`\n  cleared ${staleReview.join(' and ')} — they described the previous batch`));
+  }
+
   nextStep([
     c.bold('Read .language-loop/brief.md and write .language-loop/translations.json.'),
     c.dim('You are the translator — open the files the brief names before you write.'),
     '',
-    `then: ${commandForStage(config, 'apply')}`,
+    `then: ${commandForStage(config, 'judge')}`,
   ]);
 }
 
@@ -840,19 +850,20 @@ async function cmdReview(): Promise<void> {
   // cannot read produces a rubber stamp, not a review — so --flagged narrows
   // the canvas to the items where a judgement was actually made: a guardrail
   // warning, or a note the translator left explaining a call they had to take.
-  const onlyDecisions = flags.has('--flagged');
+  // Flagged-only is the default. The person running this cannot read most of
+  // these languages, so a canvas of 200 strings is a scrolling exercise, not a
+  // review. `--all` is there for the case where someone genuinely can read them.
+  const onlyDecisions = !flags.has('--all');
   const reviewable = onlyDecisions
     ? kept.filter((unit) => flagged.has(unitId(unit.key, unit.locale)) || Boolean(unit.notes?.trim()))
     : kept;
 
   if (onlyDecisions) {
+    const hidden = kept.length - reviewable.length;
     console.log(
-      c.dim(`  showing ${reviewable.length} that need a decision; the other ${kept.length - reviewable.length} are guardrail-clean and will be applied as-is`)
+      c.dim(`  showing ${reviewable.length} that need a decision; the other ${hidden} are guardrail-clean and will be applied as-is`)
     );
-  } else if (kept.length > 40) {
-    console.log(
-      c.dim(`  ${kept.length} is a lot to read. ${commandForStage(config, 'review --ui --flagged')} shows only the ones with a warning or a translator note.`)
-    );
+    if (hidden) console.log(c.dim(`  ${commandForStage(config, 'review --ui --all')} shows the whole batch instead`));
   }
 
   if (onlyDecisions && !reviewable.length) {
@@ -1229,8 +1240,8 @@ ${c.bold('the loop')}
   npx language-loop translate        write the brief; your agent does the language work
   npx language-loop judge            your agent grades its own translations
   npx language-loop apply            write what passed; send the rest back round
-  npx language-loop review --ui --flagged   optional — only what needs a decision
-  npx language-loop review --ui             optional — the whole batch
+  npx language-loop review --ui       optional — only what needs a decision
+  npx language-loop review --ui --all optional — the whole batch
 
 ${c.bold('the rest')}
   npx language-loop status           coverage per language, what is stale
@@ -1248,8 +1259,9 @@ ${c.bold('flags')}
   --regions europe   init: every locale used in comma-separated regions
   --llm              translate without an agent, using ANTHROPIC_API_KEY or OPENAI_API_KEY
   --ui / --collect   canvas review, or read your ticks back out of review.md
-  --flagged          review: only items with a guardrail warning or a translator
-                     note. The rest are applied as-is, not discarded.
+  --all              review: show the whole batch. By default review shows only
+                     items with a guardrail warning or a translator note; the
+                     rest are applied as-is, not discarded.
   --prune            on extract: forget memory keys the code no longer calls
                      on apply: drop catalogue keys the code no longer has
   --all / --list     on install: every agent, or show the ids

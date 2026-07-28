@@ -179,8 +179,8 @@ require effort:
   to approve asks for a rubber stamp and calls it oversight. The guardrails are the check:
   they hold back anything mechanically broken, and \`apply\` writes only what passed.
   Report what got held back and why — that is the part a human can act on.
-- Only run \`review\` if the user asks for it, and prefer \`review --ui --flagged\`, which
-  shows just the items with a guardrail warning or a note you left about a judgement call.
+- Only run \`review\` if the user asks for it. It already shows just the items with a
+  guardrail warning or a note you left about a judgement call; the rest are applied as-is.
 - Never invent a key. Keys come from \`extract\`.
 - Do not translate a string \`marketing-loop\` has an open rewrite for. The loop already
   excludes these; do not work around it.
@@ -243,11 +243,12 @@ ordered next steps for the user, but do not execute any suggested command and ma
 description: Open the translation approval canvas
 ---
 
-Run \`npx language-loop review --ui --flagged\` and give the user the URL.
+Run \`npx language-loop review --ui\` and give the user the URL.
 
-\`--flagged\` is deliberate: it shows only the translations carrying a guardrail warning or
-a note about a judgement call. Everything else was mechanically clean and is applied as-is.
-Offer the unfiltered \`review --ui\` only if they ask to see the whole batch.
+By default this shows only the translations carrying a guardrail warning or a note about a
+judgement call. Everything else was mechanically clean and is applied as-is. Offer
+\`review --ui --all\` only if they explicitly ask to see the whole batch — and remember they
+probably cannot read most of these languages, so a longer list is not a better review.
 
 The canvas is theirs, not yours. Do not approve items on their behalf. If they ask what
 they are looking at, explain that their job is not to check the grammar of a language

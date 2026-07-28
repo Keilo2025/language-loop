@@ -6,13 +6,14 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 /**
- * `review --flagged` exists because nobody speaks nine languages, and a canvas
- * asking someone to approve 200 strings they cannot read is a rubber stamp.
+ * Review shows only what needs a decision, because nobody speaks nine languages
+ * and a canvas asking someone to approve 200 strings they cannot read is a
+ * rubber stamp. `--all` opts back into the full batch.
  *
- * The danger it introduces is silent data loss: `apply` reads decisions.json
+ * The danger this introduces is silent data loss: `apply` reads decisions.json
  * *instead of* auto-approving whenever that file exists, so a review that only
- * displays 3 of 200 units would have thrown the other 197 away. These tests
- * exist for that failure, not for the flag.
+ * displays 3 of 200 units would have thrown the other 197 away. Most of these
+ * tests exist for that failure, not for the flag.
  */
 function run(dir, args) {
   const result = spawnSync(process.execPath, ['dist/cli.js', ...args, '--cwd', dir], {
@@ -60,16 +61,16 @@ function project() {
   return { dir, total: translations.length };
 }
 
-test('--flagged shows only what needs a decision', () => {
+test('review shows only what needs a decision by default', () => {
   const { dir, total } = project();
-  const out = run(dir, ['review', '--flagged']);
+  const out = run(dir, ['review']);
   assert.match(out, /showing 1 that need a decision/);
   assert.match(out, new RegExp(`the other ${total - 1} are guardrail-clean`));
 });
 
-test('--flagged carries the unshown translations through to the catalogues', () => {
+test('the narrowed review carries the unshown translations through to the catalogues', () => {
   const { dir, total } = project();
-  run(dir, ['review', '--flagged']);
+  run(dir, ['review']);
 
   // The remainder is banked before the human touches anything, so an abandoned
   // review cannot lose it either.
@@ -90,12 +91,30 @@ test('--flagged carries the unshown translations through to the catalogues', () 
   assert.equal(translated(de) + translated(ru), total, 'every translation must reach a catalogue');
 });
 
-test('a full review is unaffected and still shows everything', () => {
+test('--all opts back into the whole batch', () => {
   const { dir, total } = project();
-  const out = run(dir, ['review']);
+  const out = run(dir, ['review', '--all']);
   assert.match(out, new RegExp(`${total} ready for you`));
   assert.doesNotMatch(out, /need a decision/);
 
   // Without --flagged nothing is banked early; apply's own auto-approval covers it.
   assert.ok(!fs.existsSync(path.join(dir, '.language-loop', 'decisions.json')));
+});
+
+test('a new batch does not inherit the previous batch\'s review', () => {
+  // Seen in the wild: an abandoned review.md survived into the next run and
+  // `--collect` read 196 rejections belonging to translations that no longer
+  // existed. A new brief must invalidate every review artefact on disk.
+  const { dir } = project();
+  run(dir, ['review']);
+
+  const reviewFile = path.join(dir, '.language-loop', 'review.md');
+  const decisionsFile = path.join(dir, '.language-loop', 'decisions.json');
+  assert.ok(fs.existsSync(reviewFile));
+  assert.ok(fs.existsSync(decisionsFile));
+
+  const out = run(dir, ['translate']);
+  assert.match(out, /cleared review\.md and decisions\.json/);
+  assert.ok(!fs.existsSync(reviewFile), 'a stale review must not survive a new brief');
+  assert.ok(!fs.existsSync(decisionsFile), 'stale decisions must not survive a new brief');
 });
