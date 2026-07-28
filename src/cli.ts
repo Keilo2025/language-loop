@@ -9,10 +9,12 @@ import { scanKeyUsage, scanRepo } from './core/scan.js';
 import { assignKeys } from './core/keys.js';
 import { applyExtraction, planExtraction } from './core/extract.js';
 import {
-  adoptCatalogEdits, adoptSourceEdits, deadKeys, loadMemory, pendingWork, pruneMemory, saveMemory,
+  MAX_ATTEMPTS, adoptCatalogEdits, adoptSourceEdits, deadKeys, loadMemory, needsHuman, pendingWork,
+  pruneMemory, recordVerdicts, saveMemory,
   localeCatalog, setFallback, sourceCatalog, stats, syncMemory,
 } from './core/memory.js';
 import { writeBrief } from './core/brief.js';
+import { writeJudgeBrief } from './core/judge.js';
 import { checkTranslations, partition } from './core/guardrails.js';
 import {
   collectReviewMarkdown, loadDecisions, saveDecisions, serveReview, unitId, writeReviewMarkdown,
@@ -36,7 +38,7 @@ import { analyzeCompleteness } from './core/completeness.js';
 import { exists, readJson, truncate, writeJson } from './core/util.js';
 import { readCatalog, missingKeys, orphanKeys, writeCatalog } from './core/catalog.js';
 import { estimateBatch, translateWithLlm } from './core/llm.js';
-import type { Config, TranslationUnit } from './types.js';
+import type { Config, TranslationUnit, Verdict } from './types.js';
 
 const argv = process.argv.slice(2);
 const command = argv[0] ?? 'help';
@@ -120,6 +122,7 @@ async function main(): Promise<void> {
     case 'scan': return cmdScan();
     case 'extract': return cmdExtract();
     case 'translate': return cmdTranslate();
+    case 'judge': return cmdJudge();
     case 'review': return cmdReview();
     case 'apply': return cmdApply();
     case 'status': return cmdStatus();
@@ -657,6 +660,76 @@ async function runLlm(config: Config, work: ReturnType<typeof pendingWork>): Pro
   nextStep([commandForStage(config, 'apply') + '  ' + c.dim('# validate and write the catalogues')]);
 }
 
+/**
+ * Rules first, agent second. Everything the guardrails can decide is decided
+ * for free; only the survivors cost tokens to judge.
+ */
+function cmdJudge(): void {
+  const config = requireConfig(cwd);
+  const memory = loadMemory(cwd, config.sourceLocale);
+
+  const file = statePath(cwd, 'translations.json');
+  if (!exists(file)) {
+    throw new Error(
+      'Nothing to judge.\n' +
+        `Run  ${commandForStage(config, 'translate')}  and write .language-loop/translations.json first.`
+    );
+  }
+
+  const raw = readJson<{ translations?: { key: string; locale: string; value: string; note?: string }[] }>(file, {});
+  const incoming = raw.translations ?? [];
+  if (!incoming.length) throw new Error('translations.json has no "translations" array, or it is empty.');
+
+  const byId = new Map<string, (typeof incoming)[number]>();
+  for (const item of incoming) byId.set(unitId(item.key, item.locale), item);
+
+  const units: TranslationUnit[] = [];
+  for (const item of byId.values()) {
+    const entry = memory.entries[item.key];
+    if (!entry) continue;
+    units.push({
+      key: item.key,
+      locale: item.locale,
+      source: entry.source,
+      value: item.value,
+      kind: entry.kind,
+      file: entry.file,
+      placeholders: entry.placeholders,
+      status: 'pending',
+      notes: item.note,
+    });
+  }
+
+  const issues = checkTranslations(units, config);
+  const { kept, blocked } = partition(units, issues);
+
+  heading(`${units.length} translation(s) to judge`);
+  if (blocked.length) {
+    console.log(c.red(`  ${blocked.length} already rejected by the guardrails — not sent to the judge`));
+  }
+  console.log(`  ${c.green(String(kept.length))} need a verdict`);
+
+  if (!kept.length) {
+    nextStep([commandForStage(config, 'apply')]);
+    return;
+  }
+
+  const brief = writeJudgeBrief(cwd, {
+    config,
+    units: kept,
+    blocked: blocked.map((b) => ({ unit: b.unit, reasons: b.issues.map((i) => i.message) })),
+  });
+
+  console.log('');
+  console.log(`  ${c.green('+')} ${brief.file}  ${c.dim(`(${brief.units} to judge)`)}`);
+  nextStep([
+    c.bold('Read .language-loop/judge.md and write .language-loop/verdicts.json.'),
+    c.dim('You are judging your own translations — open the files before you decide.'),
+    '',
+    `then: ${commandForStage(config, 'apply')}`,
+  ]);
+}
+
 async function cmdReview(): Promise<void> {
   const config = requireConfig(cwd);
   const memory = loadMemory(cwd, config.sourceLocale);
@@ -685,7 +758,10 @@ async function cmdReview(): Promise<void> {
     const blocking = checkTranslations(edited, config).filter((i) => i.severity === 'block');
     const bad = new Set(blocking.map((i) => unitId(i.key, i.locale)));
 
-    const decisions: Record<string, Decision> = {};
+    // Start from whatever is already on disk: under `review --flagged` that is
+    // the auto-approved remainder the reviewer was never shown, and dropping it
+    // here would quietly discard most of the batch.
+    const decisions: Record<string, Decision> = { ...loadDecisions(cwd) };
     for (const [id, decision] of Object.entries(collected)) {
       if (decision.approved && bad.has(id)) continue;
       decisions[id] = decision;
@@ -760,9 +836,58 @@ async function cmdReview(): Promise<void> {
   if (flagged.size) console.log(c.yellow(`  ${flagged.size} flagged for a closer look`));
   console.log(`  ${c.green(String(kept.length))} ready for you`);
 
-  const bundle = { units: kept, issues: flagged, blocked };
+  // Nobody speaks nine languages. Asking someone to approve 200 strings they
+  // cannot read produces a rubber stamp, not a review — so --flagged narrows
+  // the canvas to the items where a judgement was actually made: a guardrail
+  // warning, or a note the translator left explaining a call they had to take.
+  const onlyDecisions = flags.has('--flagged');
+  const reviewable = onlyDecisions
+    ? kept.filter((unit) => flagged.has(unitId(unit.key, unit.locale)) || Boolean(unit.notes?.trim()))
+    : kept;
+
+  if (onlyDecisions) {
+    console.log(
+      c.dim(`  showing ${reviewable.length} that need a decision; the other ${kept.length - reviewable.length} are guardrail-clean and will be applied as-is`)
+    );
+  } else if (kept.length > 40) {
+    console.log(
+      c.dim(`  ${kept.length} is a lot to read. ${commandForStage(config, 'review --ui --flagged')} shows only the ones with a warning or a translator note.`)
+    );
+  }
+
+  if (onlyDecisions && !reviewable.length) {
+    heading('nothing needs you');
+    console.log(c.dim('  Every translation is guardrail-clean and none needed a judgement call.'));
+    nextStep([commandForStage(config, 'apply')]);
+    return;
+  }
+
+  // The clean, unshown remainder still has to reach the catalogues. `apply`
+  // stops auto-approving the moment decisions.json exists, so these ride along
+  // with whatever the reviewer decides.
+  const carry: Record<string, Decision> = onlyDecisions
+    ? Object.fromEntries(
+        kept
+          .filter((unit) => !reviewable.includes(unit))
+          .map((unit) => [
+            unitId(unit.key, unit.locale),
+            {
+              key: unit.key,
+              locale: unit.locale,
+              approved: true,
+              value: unit.value,
+              editedByHuman: false,
+            } satisfies Decision,
+          ])
+      )
+    : {};
+
+  const bundle = { units: reviewable, issues: flagged, blocked, carry };
 
   if (!flags.has('--ui')) {
+    // Written up front so `review --collect` has something to merge into —
+    // the markdown round trip does not know this run was narrowed.
+    if (onlyDecisions) saveDecisions(cwd, carry);
     const md = writeReviewMarkdown(cwd, bundle, config, memory);
     heading('markdown review');
     console.log(`  ${c.green('+')} ${md}`);
@@ -796,6 +921,14 @@ function cmdApply(): void {
   const memory = loadMemory(cwd, config.sourceLocale);
   let decisions = loadDecisions(cwd);
   let heldBack = 0;
+
+  // Verdicts are optional: `judge` is a stage you can skip, and skipping it
+  // leaves apply behaving exactly as it did before the judge existed.
+  const verdictFile = statePath(cwd, 'verdicts.json');
+  const verdicts = exists(verdictFile)
+    ? (readJson<{ verdicts?: Verdict[] }>(verdictFile, {}).verdicts ?? [])
+    : [];
+  const judgedValues = new Map<string, string>();
 
   if (!Object.keys(decisions).length) {
     const file = statePath(cwd, 'translations.json');
@@ -831,14 +964,25 @@ function cmdApply(): void {
         status: entry.translations[item.locale]?.status === 'stale' ? 'stale' : 'pending',
         notes: item.note,
       });
+      judgedValues.set(unitId(item.key, item.locale), item.value);
     }
 
     const issues = checkTranslations(units, config);
     const unsafe = new Set(issues.map((issue) => unitId(issue.key, issue.locale)));
     heldBack += unsafe.size;
+
+    // A verdict outranks a clean guardrail run: the rules only prove a string
+    // is not broken, the judge is the one that read what it actually says.
+    const rejected = new Set(
+      verdicts.filter((verdict) => !verdict.ok).map((verdict) => unitId(verdict.key, verdict.locale))
+    );
+
     decisions = Object.fromEntries(
       units
-        .filter((unit) => !unsafe.has(unitId(unit.key, unit.locale)))
+        .filter((unit) => {
+          const id = unitId(unit.key, unit.locale);
+          return !unsafe.has(id) && !rejected.has(id);
+        })
         .map((unit) => [
           unitId(unit.key, unit.locale),
           {
@@ -855,6 +999,14 @@ function cmdApply(): void {
   const dryRun = flags.has('--dry-run');
   const result = applyDecisions(cwd, memory, config, decisions, { dryRun, prune: flags.has('--prune') });
 
+  // After applying, not before: applyDecisions writes the approved translations
+  // into memory, and recording verdicts first would have them overwrite it.
+  const judged = verdicts.length ? recordVerdicts(memory, verdicts, judgedValues) : null;
+  if (judged && !dryRun) {
+    saveMemory(cwd, memory);
+    fs.rmSync(statePath(cwd, 'verdicts.json'), { force: true });
+  }
+
   heading(dryRun ? 'would write' : 'written');
   for (const file of result.written) console.log(`  ${dryRun ? c.dim('·') : c.green('+')} ${file}`);
 
@@ -864,6 +1016,17 @@ function cmdApply(): void {
   if (result.rejected) console.log(`  ${c.dim(`${result.rejected} rejected — they stay out and will be offered again next run`)}`);
   if (result.skippedManual) console.log(`  ${c.yellow(`${result.skippedManual} skipped — a human had already edited those by hand`)}`);
 
+  if (judged) {
+    if (judged.rework) {
+      console.log(`  ${c.yellow(`${judged.rework} sent back to the translator with the judge's reason`)}`);
+    }
+    if (judged.exhausted) {
+      console.log(
+        `  ${c.red(`${judged.exhausted} failed ${MAX_ATTEMPTS} attempts and stopped looping`)} ${c.dim('— waiting on a person')}`
+      );
+    }
+  }
+
   for (const [locale, keys] of Object.entries(result.orphans)) {
     console.log(`  ${c.dim(`${locale}: ${keys.length} key(s) no longer in the code${flags.has('--prune') ? ' — removed' : ' — kept, use --prune to drop them'}`)}`);
   }
@@ -872,7 +1035,16 @@ function cmdApply(): void {
     fs.rmSync(statePath(cwd, 'decisions.json'), { force: true });
     fs.rmSync(statePath(cwd, 'translations.json'), { force: true });
     console.log(`\n  ${c.dim(`${commandForStage(config, 'revert')}  undoes this`)}`);
-    nextStep([commandForStage(config, 'status') + '  ' + c.dim('# coverage per language')]);
+    // The loop closes here: anything the judge sent back is pending again, so
+    // the next `translate` picks it up with the reason attached.
+    nextStep(
+      judged?.rework
+        ? [
+            `${judged.rework} translation(s) need another pass:`,
+            commandForStage(config, 'translate'),
+          ]
+        : [commandForStage(config, 'status') + '  ' + c.dim('# coverage per language')]
+    );
   }
 }
 
@@ -905,7 +1077,19 @@ function cmdStatus(): void {
   }
   if (work.length) {
     const stale = work.filter((w) => w.reason === 'stale').length;
-    console.log(`  ${c.yellow(String(work.length))} translation(s) outstanding${stale ? `, ${stale} of them stale because the English changed` : ''}`);
+    const rework = work.filter((w) => w.reason === 'rework').length;
+    console.log(`  ${c.yellow(String(work.length))} translation(s) outstanding${stale ? `, ${stale} of them stale because the English changed` : ''}${rework ? `, ${rework} sent back by the judge` : ''}`);
+  }
+
+  // The residue of the loop: strings that failed every retry. Small by design,
+  // and the only thing here that genuinely needs a person who speaks it.
+  const stuck = needsHuman(memory);
+  if (stuck.length) {
+    console.log(`  ${c.red(String(stuck.length))} gave up after ${MAX_ATTEMPTS} attempts and need a human:`);
+    for (const item of stuck.slice(0, 8)) {
+      console.log(`    ${c.dim(`${item.key} · ${item.locale}`)} — ${item.note}`);
+    }
+    if (stuck.length > 8) console.log(c.dim(`    …and ${stuck.length - 8} more`));
   }
 
   const marketing = detectMarketingLoop(cwd);
@@ -1043,8 +1227,10 @@ ${c.bold('the loop')}
   npx language-loop scan             what is still hardcoded
   npx language-loop extract          move those strings into keys, wire the hook
   npx language-loop translate        write the brief; your agent does the language work
-  npx language-loop apply            validate translations and write safe ones
-  npx language-loop review --ui      optional expert review canvas
+  npx language-loop judge            your agent grades its own translations
+  npx language-loop apply            write what passed; send the rest back round
+  npx language-loop review --ui --flagged   optional — only what needs a decision
+  npx language-loop review --ui             optional — the whole batch
 
 ${c.bold('the rest')}
   npx language-loop status           coverage per language, what is stale
@@ -1062,6 +1248,8 @@ ${c.bold('flags')}
   --regions europe   init: every locale used in comma-separated regions
   --llm              translate without an agent, using ANTHROPIC_API_KEY or OPENAI_API_KEY
   --ui / --collect   canvas review, or read your ticks back out of review.md
+  --flagged          review: only items with a guardrail warning or a translator
+                     note. The rest are applied as-is, not discarded.
   --prune            on extract: forget memory keys the code no longer calls
                      on apply: drop catalogue keys the code no longer has
   --all / --list     on install: every agent, or show the ids

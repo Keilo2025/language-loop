@@ -30,6 +30,14 @@ export interface ReviewBundle {
   units: TranslationUnit[];
   issues: Map<string, GuardrailIssue[]>;
   blocked: { unit: TranslationUnit; issues: GuardrailIssue[] }[];
+  /**
+   * Decisions already taken for units the reviewer is deliberately not being
+   * shown — the guardrail-clean ones under `review --flagged`. `apply` reads
+   * decisions.json *instead of* auto-approving when the file exists, so these
+   * have to be merged in at save time or a narrowed review would silently drop
+   * every translation it did not display.
+   */
+  carry?: Record<string, Decision>;
 }
 
 export function loadDecisions(cwd: string): Record<string, Decision> {
@@ -200,7 +208,9 @@ export async function serveReview(
               editedByHuman: item.edited,
             };
           }
-          saveDecisions(cwd, decisions);
+          // Carried decisions first, so anything the reviewer actually touched
+          // wins over the automatic approval it would otherwise have had.
+          saveDecisions(cwd, { ...(bundle.carry ?? {}), ...decisions });
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ ok: true, saved: incoming.length }));
           resolveDone(decisions);

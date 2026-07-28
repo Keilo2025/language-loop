@@ -142,8 +142,14 @@ have just added a page or component with user-facing English in it — run the l
 npx language-loop scan       # what is still hardcoded
 npx language-loop extract    # move those strings into keys, wire up the hook
 npx language-loop translate  # writes .language-loop/brief.md for you
-npx language-loop apply      # validate and write safe translations
+npx language-loop judge      # writes .language-loop/judge.md — you grade your own work
+npx language-loop apply      # writes what passed; sends the rest back round
 \`\`\`
+
+It is a loop, not a line. Anything the judge rejects returns to \`translate\` with the
+reason attached, and goes round again until it passes or runs out of attempts. Re-running
+after adding a page translates that page only — memory tracks what is already done, so the
+loop is cheap the second time.
 
 ### Your part
 
@@ -168,6 +174,13 @@ require effort:
 - Never edit catalogue files by hand to add translations — \`apply\` validates and writes
   those. If you edit one anyway, the loop will notice and mark it \`manual\`, which locks it
   against future runs.
+- **The ordinary flow ends at \`apply\`. Do not open the review canvas.** The user very
+  likely does not speak the languages you just wrote, so handing them two hundred strings
+  to approve asks for a rubber stamp and calls it oversight. The guardrails are the check:
+  they hold back anything mechanically broken, and \`apply\` writes only what passed.
+  Report what got held back and why — that is the part a human can act on.
+- Only run \`review\` if the user asks for it, and prefer \`review --ui --flagged\`, which
+  shows just the items with a guardrail warning or a note you left about a judgement call.
 - Never invent a key. Keys come from \`extract\`.
 - Do not translate a string \`marketing-loop\` has an open rewrite for. The loop already
   excludes these; do not work around it.
@@ -178,7 +191,7 @@ require effort:
 
 export const COMMANDS: Record<string, string> = {
   'language-loop': `---
-description: Run the full localization loop — scan, extract, translate, validate, apply
+description: Run the full localization loop — scan, extract, translate, judge, apply
 ---
 
 Run the language loop on this project.
@@ -191,6 +204,8 @@ forms below are terminal commands for you to run, not the next command to show t
 2. \`npx language-loop extract\` — move those strings into keys and wire the runtime hook.
    Read the open items it reports; the ones it refused are yours to do by hand.
 3. \`npx language-loop translate\` — this writes \`.language-loop/brief.md\` and stops.
+   The brief may contain **rework** items: strings the judge rejected on an earlier pass,
+   each carrying the reason. Fix the stated problem rather than rephrasing around it.
 4. **Read the brief in full.** You are the translator. For each item, open the file it
    names before you write anything — the surrounding component tells you whether a word
    is a verb or a noun, and how much room the string has. Preserve every placeholder
@@ -198,8 +213,16 @@ forms below are terminal commands for you to run, not the next command to show t
    language for the selected audience locale, never literal textbook prose.
 5. Write \`.language-loop/translations.json\` in the schema at the bottom of the brief. Use
    the optional \`note\` field whenever you made a judgement call.
-6. \`npx language-loop apply\` — automated guardrails hold questionable or mechanically
-   invalid translations back and write the safe translations to the catalogues.
+6. \`npx language-loop judge\` — writes \`.language-loop/judge.md\`. Read your own translations
+   back against the source and the component, and write \`.language-loop/verdicts.json\`.
+   Rejecting your own work here is the point of the stage: the user probably cannot read
+   these languages, so your verdict is the only quality check there is.
+7. \`npx language-loop apply\` — automated guardrails hold questionable or mechanically
+   invalid translations back and write the safe translations to the catalogues. Anything
+   the judge rejected is sent back rather than written.
+8. **If \`apply\` reports translations sent back, go to step 3 and do another pass.** That is
+   the loop closing. Repeat until nothing comes back. A string that fails twice stops being
+   re-offered and waits for a person — report those instead of trying to force them through.
 
 Report coverage per language at the end with \`npx language-loop status\`.
 
@@ -220,7 +243,11 @@ ordered next steps for the user, but do not execute any suggested command and ma
 description: Open the translation approval canvas
 ---
 
-Run \`npx language-loop review --ui\` and give the user the URL.
+Run \`npx language-loop review --ui --flagged\` and give the user the URL.
+
+\`--flagged\` is deliberate: it shows only the translations carrying a guardrail warning or
+a note about a judgement call. Everything else was mechanically clean and is applied as-is.
+Offer the unfiltered \`review --ui\` only if they ask to see the whole batch.
 
 The canvas is theirs, not yours. Do not approve items on their behalf. If they ask what
 they are looking at, explain that their job is not to check the grammar of a language

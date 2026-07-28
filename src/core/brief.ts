@@ -142,6 +142,14 @@ export function writeBrief(cwd: string, input: BriefInput): { file: string; unit
         lines.push(`  - previous ${locale}: ${JSON.stringify(item.previous ?? '')}`);
         lines.push('  - the English changed since that was written — revise it rather than starting over');
       }
+      if (item.reason === 'rework') {
+        // Without the reason the retry is blind, and a blind retry usually
+        // produces the same sentence with different adjectives.
+        lines.push(`  - **rejected attempt ${(item.attempt ?? 2) - 1}**: ${JSON.stringify(item.previous ?? '')}`);
+        lines.push(`  - **why it was rejected**: ${item.judgeNote ?? 'no reason recorded'}`);
+        lines.push('  - fix that specific problem. Do not merely rephrase — if the objection was about');
+        lines.push('    meaning, the new version has to mean something different.');
+      }
     }
     lines.push('');
   }

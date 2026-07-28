@@ -31,9 +31,15 @@ translates the delta rather than the app.
 npx language-loop scan       # what is still hardcoded
 npx language-loop extract    # move it into keys, wire the hook
 npx language-loop translate  # writes .language-loop/brief.md — then stops
-npx language-loop apply      # validate and write safe translations
+npx language-loop judge      # writes .language-loop/judge.md — grade your own work
+npx language-loop apply      # write what passed; send the rest back round
 npx language-loop audit      # read-only completeness report and ordered fixes
 ```
+
+`apply` reports how many translations the judge sent back. **If that number is not zero, go
+round again from `translate`** — the brief will contain those strings with the reason each
+one failed. Repeat until nothing comes back. A string that fails twice stops being offered
+and waits for a person; report it rather than trying to force it through.
 
 If there is no `language-loop.config.json`, run `npx language-loop init` first. It asks
 which agent the user codes in and which languages they want, and it needs a real terminal.
@@ -78,9 +84,25 @@ only if you use the advantage you have, which is that you can read the code:
    bureaucratic or needlessly formal prose, and use the selected audience locale's vocabulary
    and spelling.
 
-Write `.language-loop/translations.json` exactly as the brief specifies, then run `apply`.
-Automated guardrails hold questionable or mechanically invalid entries back and write the
-safe translations to the catalogues. Do not open the review canvas in the ordinary flow.
+Write `.language-loop/translations.json` exactly as the brief specifies, then run `judge`.
+
+## Judging your own work
+
+`judge` writes `.language-loop/judge.md`; you answer with `.language-loop/verdicts.json`.
+Only translations that already passed the mechanical guardrails appear there, so the
+question is never "is this broken" — it is "does this say the right thing, in the right
+register, for this place".
+
+Reject your own translation when it means something the English did not, when it reads like
+a textbook rather than a product, when a regional locale got neutral wording, or when it no
+longer fits its slot. Do not reject on taste: every rejection spends one of the two attempts
+that string gets, and a genuinely broken translation may need it.
+
+The reason you write is handed verbatim to the next attempt, so write the correction you
+would want to read — "says cancelled, not failed", not "incorrect".
+
+Then run `apply`. Guardrail failures and judge rejections are held back; everything else is
+written to the catalogues. Do not open the review canvas in the ordinary flow.
 
 ## What you must not do
 

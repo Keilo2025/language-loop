@@ -13,9 +13,45 @@ npx language-loop init        # pick your agent and your languages
 npx language-loop scan        # find every hardcoded user-facing string
 npx language-loop extract     # turn them into keys and wire up the runtime
 npx language-loop translate   # brief your agent on what actually needs doing
-npx language-loop apply       # validate and write safe translations
+npx language-loop judge       # your agent grades its own translations
+npx language-loop apply       # write what passed; send the rest back round
 npx language-loop audit       # read-only completeness report and ordered fixes
 ```
+
+## It is a loop, not a pipeline
+
+```
+scan ─► extract ─► translate ─► judge ─► apply ─┬─► done
+                       ▲                        │
+                       └──── rejected, with ────┘
+                             the reason why
+```
+
+`judge` is the stage that makes the rest safe to run unattended. Your agent reads its own
+translations back — against the English, and against the component the string lives in —
+and returns a verdict on each. Anything it rejects never reaches your catalogues. It goes
+back to `translate` carrying the reason it failed, and round it goes again.
+
+Two things stop that looping forever. A string gets **two attempts**; after the second
+rejection it stops being re-offered and waits for a person, because a third pass from the
+same model against the same brief is usually the second pass again. And the mechanical
+guardrails run *before* the judge, so tokens are never spent asking for an opinion on a
+translation that is already broken.
+
+This exists because of a specific problem: **you probably cannot read the languages you are
+shipping.** A review screen asking you to approve two hundred Russian strings is not
+oversight, it is a rubber stamp. So the loop checks its own work, and what reaches you is
+only what it could not settle — usually a handful, each with a reason attached.
+
+```bash
+npx language-loop status                  # coverage, plus anything that gave up
+npx language-loop review --ui --flagged   # optional: only what needs a decision
+```
+
+**Re-runs are cheap.** Memory records what is already translated and the hash of the English
+it was translated from. Add a page, run the loop again, and it translates that page — not
+your app. Change an English string and only its translations go stale. That is the whole
+reason the memory file belongs in git.
 
 During `init`, pick from the popular audience locales, search the full catalogue by name
 (type `swahili`, `swiss`, `brazil`), select whole regions, take every language at once, or

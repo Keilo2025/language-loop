@@ -149,7 +149,15 @@ export type TranslationStatus =
   /** A human approved it. */
   | 'approved'
   /** A human edited the catalogue by hand. Never overwritten. */
-  | 'manual';
+  | 'manual'
+  /** The judge rejected it. Goes back round with the reason attached. */
+  | 'rework'
+  /**
+   * Rejected as many times as the loop is willing to retry. It stops being
+   * re-offered — a third attempt from the same model on the same brief is
+   * usually the same answer — and waits for a person instead.
+   */
+  | 'needs-human';
 
 export interface MemoryTranslation {
   value: string;
@@ -159,6 +167,13 @@ export interface MemoryTranslation {
   updatedAt: string;
   /** Who produced it: 'agent' | 'llm:<model>' | 'human' */
   by: string;
+  /**
+   * How many times this string has been translated and rejected. Reset when the
+   * English changes, because that is a different translation problem.
+   */
+  attempts?: number;
+  /** Why the judge rejected the last attempt. Carried into the next brief. */
+  judgeNote?: string;
 }
 
 export interface MemoryEntry {
@@ -209,7 +224,21 @@ export interface WorkItem {
   kind: StringKind;
   file: string;
   placeholders: string[];
-  reason: 'new' | 'stale';
-  /** The previous translation, when this is a stale re-translation. */
+  reason: 'new' | 'stale' | 'rework';
+  /** The previous translation, when this is a stale or rejected re-translation. */
   previous?: string;
+  /** Why the judge sent it back. Only set when reason is 'rework'. */
+  judgeNote?: string;
+  /** Which attempt this will be. 2 means one has already been rejected. */
+  attempt?: number;
+}
+
+/** One judge verdict on one translation. */
+export interface Verdict {
+  key: string;
+  locale: string;
+  /** False sends it back round with `reason` attached. */
+  ok: boolean;
+  /** Required when ok is false — this is what the next attempt is told. */
+  reason?: string;
 }

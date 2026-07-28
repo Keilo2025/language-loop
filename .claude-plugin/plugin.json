@@ -1,6 +1,6 @@
 {
   "name": "language-loop",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Scans your code for hardcoded words, turns them into i18n keys, remembers what it already translated, and only translates what changed — with guardrails holding back anything that would break.",
   "author": {
     "name": "Christian Buchholz",

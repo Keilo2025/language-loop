@@ -1,4 +1,4 @@
-import type { Config, KeyedString, Memory, MemoryEntry, TranslationStatus, WorkItem } from '../types.js';
+import type { Config, KeyedString, Memory, MemoryEntry, MemoryTranslation, TranslationStatus, Verdict, WorkItem } from '../types.js';
 import { statePath } from './config.js';
 import { readCatalog, type Flat } from './catalog.js';
 import { leafOf } from './keys.js';
@@ -90,7 +90,7 @@ export function syncMemory(memory: Memory, strings: KeyedString[], config: Confi
       for (const translation of Object.values(existing.translations)) {
         // A hand-written translation is still a person's work; mark it stale so
         // it is reviewed, but never silently discard it.
-        if (translation.sourceHash !== hash) translation.status = 'stale';
+        if (translation.sourceHash !== hash) resetForNewSource(translation);
       }
       changed.push(s.key);
     } else {
@@ -153,7 +153,7 @@ export function adoptSourceEdits(cwd: string, memory: Memory, config: Config): s
     entry.source = value;
     entry.sourceHash = sha(value);
     for (const translation of Object.values(entry.translations)) {
-      if (translation.sourceHash !== entry.sourceHash) translation.status = 'stale';
+      if (translation.sourceHash !== entry.sourceHash) resetForNewSource(translation);
     }
     changed.push(key);
   }
@@ -193,22 +193,131 @@ export function adoptCatalogEdits(cwd: string, memory: Memory, config: Config): 
 }
 
 /** Everything that still needs a translation, for every target locale. */
+/**
+ * How many times the loop will re-translate a string the judge rejected before
+ * it stops asking. A third attempt from the same model against the same brief
+ * is usually the second attempt again, so the cap protects the token budget
+ * and turns a stuck string into a small, honest pile for a human.
+ */
+export const MAX_ATTEMPTS = 2;
+
+/**
+ * New English is a new translation problem. A string that failed the judge
+ * twice against the old wording deserves a clean slate against the new one —
+ * otherwise it stays stuck at `needs-human` forever for a sentence that no
+ * longer exists.
+ */
+function resetForNewSource(translation: MemoryTranslation): void {
+  translation.status = 'stale';
+  delete translation.attempts;
+  delete translation.judgeNote;
+}
+
 export function pendingWork(memory: Memory, config: Config, only?: string[]): WorkItem[] {
   const work: WorkItem[] = [];
   const locales = only?.length ? only : config.locales;
 
   for (const [key, entry] of Object.entries(memory.entries)) {
+    const common = {
+      key,
+      source: entry.source,
+      kind: entry.kind,
+      file: entry.file,
+      placeholders: entry.placeholders,
+    };
     for (const locale of locales) {
       if (locale === config.sourceLocale) continue;
       const t = entry.translations[locale];
       if (!t) {
-        work.push({ key, locale, source: entry.source, kind: entry.kind, file: entry.file, placeholders: entry.placeholders, reason: 'new' });
+        work.push({ ...common, locale, reason: 'new' });
       } else if (t.status === 'stale') {
-        work.push({ key, locale, source: entry.source, kind: entry.kind, file: entry.file, placeholders: entry.placeholders, reason: 'stale', previous: t.value });
+        work.push({ ...common, locale, reason: 'stale', previous: t.value });
+      } else if (t.status === 'rework') {
+        // 'needs-human' is deliberately absent: it has had its retries and is
+        // waiting on a person, not on another pass.
+        work.push({
+          ...common,
+          locale,
+          reason: 'rework',
+          previous: t.value,
+          judgeNote: t.judgeNote,
+          attempt: (t.attempts ?? 0) + 1,
+        });
       }
     }
   }
   return work;
+}
+
+/**
+ * Record what the judge decided. A rejection does not reach the catalogues; it
+ * goes back to `rework` with the reason, until it runs out of attempts.
+ */
+export function recordVerdicts(
+  memory: Memory,
+  verdicts: Verdict[],
+  /** The values judged, so a first-time rejection has something to record. */
+  values: Map<string, string>
+): { rework: number; exhausted: number; passed: number } {
+  let rework = 0;
+  let exhausted = 0;
+  let passed = 0;
+
+  for (const verdict of verdicts) {
+    const entry = memory.entries[verdict.key];
+    if (!entry) continue;
+
+    if (verdict.ok) {
+      passed++;
+      continue;
+    }
+
+    // A string rejected on its first pass has never been written to memory —
+    // `apply` only records what it approves. Without this it would vanish from
+    // the loop entirely: no translation, no rework flag, nothing to re-offer.
+    const translation =
+      entry.translations[verdict.locale] ??
+      (entry.translations[verdict.locale] = {
+        value: values.get(`${verdict.key}::${verdict.locale}`) ?? '',
+        sourceHash: entry.sourceHash,
+        status: 'rework',
+        updatedAt: new Date().toISOString(),
+        by: 'agent',
+        attempts: 0,
+      });
+
+    const attempts = (translation.attempts ?? 0) + 1;
+    translation.attempts = attempts;
+    translation.value = values.get(`${verdict.key}::${verdict.locale}`) ?? translation.value;
+    translation.judgeNote = verdict.reason?.trim() || 'rejected by the judge, no reason given';
+    translation.updatedAt = new Date().toISOString();
+
+    // >= not >: MAX_ATTEMPTS counts attempts made, not retries allowed. At two
+    // rejections the string has had its two goes and stops being re-offered.
+    if (attempts >= MAX_ATTEMPTS) {
+      translation.status = 'needs-human';
+      exhausted++;
+    } else {
+      translation.status = 'rework';
+      rework++;
+    }
+  }
+
+  memory.updatedAt = new Date().toISOString();
+  return { rework, exhausted, passed };
+}
+
+/** Everything that ran out of retries and is waiting on a person. */
+export function needsHuman(memory: Memory): { key: string; locale: string; value: string; note: string }[] {
+  const out: { key: string; locale: string; value: string; note: string }[] = [];
+  for (const [key, entry] of Object.entries(memory.entries)) {
+    for (const [locale, t] of Object.entries(entry.translations)) {
+      if (t.status === 'needs-human') {
+        out.push({ key, locale, value: t.value, note: t.judgeNote ?? '' });
+      }
+    }
+  }
+  return out;
 }
 
 export interface MemoryStats {
@@ -222,7 +331,10 @@ export function stats(memory: Memory, config: Config): MemoryStats {
 
   for (const locale of config.locales) {
     if (locale === config.sourceLocale) continue;
-    const counts = { new: 0, stale: 0, pending: 0, approved: 0, manual: 0, missing: 0, coverage: 0 };
+    const counts = {
+      new: 0, stale: 0, pending: 0, approved: 0, manual: 0,
+      rework: 0, 'needs-human': 0, missing: 0, coverage: 0,
+    };
     for (const entry of Object.values(memory.entries)) {
       const t = entry.translations[locale];
       if (!t) counts.missing++;
