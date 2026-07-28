@@ -24,11 +24,12 @@ import { AGENTS, detectAgents, installAgents, uninstallAgents } from './core/ins
 import { wireRuntime } from './core/wire.js';
 import { Backup, revertLast } from './core/backup.js';
 import {
-  COMMON_LOCALES, REGIONS, canonicalLocaleCode, localeInfo, localesForRegions,
+  AUDIENCE_LOCALES, COMMON_LOCALES, REGIONS, canonicalLocaleCode, localeInfo,
+  localesForRegions, searchLocales,
   type LocaleRegion,
 } from './core/locales.js';
 import { resolveLocaleSelection } from './core/locale-selection.js';
-import { Prompt, isInteractive } from './core/prompt.js';
+import { Prompt, isInteractive, type MultiOptions } from './core/prompt.js';
 import { c, commandForStage, heading, nextStep, reportScan, reportStats } from './core/report.js';
 import { renderCompletenessReport } from './core/report.js';
 import { analyzeCompleteness } from './core/completeness.js';
@@ -63,6 +64,47 @@ function commonLocaleChoices(tier: 'popular' | 'common', sourceLocale: string) {
       label: `${locale.code.padEnd(12)} ${locale.english}`,
       hint: locale.nativeName,
     }));
+}
+
+/** Name a few, count the rest. Pick "all languages" and this list is 300 long. */
+function summarise(codes: string[], shown = 8): string {
+  if (codes.length <= shown) return codes.join(', ');
+  return `${codes.slice(0, shown).join(', ')} and ${codes.length - shown} more`;
+}
+
+/**
+ * The picker only shows the popular locales, because a 385-line list is not a
+ * list, it is a wall. Search is what makes the rest reachable: type `swahili`,
+ * `?swiss`, or `yoruba` and the matches get printed and the question asked
+ * again.
+ */
+function localeSearchOptions(): MultiOptions {
+  return {
+    hint: 'numbers or locale codes, comma separated',
+    legend: [
+      `not listed? type a language or country — ${c.dim('swahili, swiss, brazil')} — to search all ${COMMON_LOCALES.length}`,
+    ],
+    resolve: (token) => {
+      const query = token.replace(/^[?/]/, '');
+      // A BCP-47-shaped token is a code the user means literally, not a search.
+      if (!token.startsWith('?') && !token.startsWith('/') && /^[a-z]{2,3}([-_][a-z0-9]{2,8})*$/i.test(token)) {
+        return null;
+      }
+      const matches = searchLocales(query);
+      if (matches.length === 1) return { values: [matches[0]!.code] };
+      if (!matches.length) {
+        console.log(c.dim(`  nothing matches "${query}"`));
+        return { reprompt: true };
+      }
+      console.log(`\n  ${matches.length} match "${query}":`);
+      for (const locale of matches.slice(0, 40)) {
+        console.log(`    ${locale.code.padEnd(14)} ${locale.english}  ${c.dim(locale.nativeName)}`);
+      }
+      if (matches.length > 40) console.log(c.dim(`    …and ${matches.length - 40} more — narrow the search`));
+      console.log(c.dim('  type the codes you want, or search again'));
+      return { reprompt: true };
+    },
+  };
 }
 
 main().catch((error: unknown) => {
@@ -119,10 +161,13 @@ async function cmdInit(): Promise<void> {
     }
     if (valueOf('--source') !== undefined) config.sourceLocale = canonicalLocaleCode(valueOf('--source')!);
     if (localeArg !== undefined) {
+      // `all` is the audience locales; `everything` is those plus the long tail.
+      const keyword = localeArg.trim().toLowerCase();
+      const bulk = keyword === 'all' || keyword === 'everything';
       config.locales = resolveLocaleSelection({
         sourceLocale: config.sourceLocale,
-        mode: localeArg.trim().toLowerCase() === 'all' ? 'all' : 'custom',
-        codes: localeArg.trim().toLowerCase() === 'all' ? undefined : listOf('--locales'),
+        mode: bulk ? (keyword as 'all' | 'everything') : 'custom',
+        codes: bulk ? undefined : listOf('--locales'),
       });
     } else if (regionArgs.length) {
       config.locales = resolveLocaleSelection({
@@ -180,9 +225,10 @@ async function cmdInit(): Promise<void> {
     const selectionMode = await prompt.pick(
       '\nHow do you want to choose the languages to ship?',
       [
-        { value: 'popular', label: 'Popular languages', hint: 'pick individual audience locales' },
+        { value: 'popular', label: 'Popular languages', hint: 'pick individual audience locales, or search' },
         { value: 'regions', label: 'By region', hint: 'Africa, Americas, Asia, Europe, Middle East, Oceania' },
-        { value: 'all', label: 'All common languages', hint: `${COMMON_LOCALES.length} modern written locales` },
+        { value: 'all', label: 'All audience locales', hint: `${AUDIENCE_LOCALES.length} locales with a country and a dialect` },
+        { value: 'everything', label: 'Every language', hint: `${COMMON_LOCALES.length}, long tail included` },
         { value: 'custom', label: 'Enter locale codes', hint: 'any valid BCP-47 code' },
       ],
       'popular'
@@ -196,9 +242,16 @@ async function cmdInit(): Promise<void> {
         'numbers or region names, comma separated'
       );
       const regionalLocales = localesForRegions(selectedRegions as LocaleRegion[]);
+      // A whole region is a lot of languages. Default to the audience locales
+      // in it — the ones with a dialect attached — and let people opt into the
+      // long tail rather than being handed 120 backlogs by accident.
+      const audience = regionalLocales.filter((locale) => locale.tier !== 'extended');
+      const offered = audience.length ? audience : regionalLocales;
       selectedCodes = await prompt.multi(
-        `${regionalLocales.length} common locale(s) are used in those regions. Press Enter to keep all, or refine:`,
-        regionalLocales
+        `${offered.length} audience locale(s) are used in those regions` +
+          `${regionalLocales.length > offered.length ? `, out of ${regionalLocales.length} languages total` : ''}. ` +
+          `Press Enter to keep all, or refine:`,
+        offered
           .filter((locale) => locale.code !== config.sourceLocale)
           .map((locale) => ({
             value: locale.code,
@@ -206,20 +259,33 @@ async function cmdInit(): Promise<void> {
             hint: locale.nativeName,
             preselected: true,
           })),
-        'Enter keeps all; otherwise use numbers or locale codes'
+        {
+          hint: 'Enter keeps all; otherwise use numbers or locale codes',
+          legend:
+            regionalLocales.length > offered.length
+              ? [`type  full  to include all ${regionalLocales.length} languages in these regions`]
+              : [],
+          resolve: (token) =>
+            token.toLowerCase() === 'full'
+              ? { values: regionalLocales.map((locale) => locale.code) }
+              : null,
+        }
       );
-    } else if (selectionMode === 'all') {
+    } else if (selectionMode === 'all' || selectionMode === 'everything') {
+      const pool = selectionMode === 'all' ? AUDIENCE_LOCALES : COMMON_LOCALES;
+      const noun = selectionMode === 'all' ? 'audience locales' : 'languages';
       const confirmed = await prompt.confirm(
-        `Add all ${COMMON_LOCALES.length} common modern locales? This creates a large translation backlog.`,
+        `Add all ${pool.length} ${noun}? This creates a large translation backlog.`,
         false
       );
       if (!confirmed) {
         selectedCodes = await prompt.multi(
           'Choose popular audience locales instead:',
-          commonLocaleChoices('popular', config.sourceLocale)
+          commonLocaleChoices('popular', config.sourceLocale),
+          localeSearchOptions()
         );
       } else {
-        selectedCodes = COMMON_LOCALES.map((locale) => locale.code);
+        selectedCodes = pool.map((locale) => locale.code);
       }
     } else if (selectionMode === 'custom') {
       const entered = await prompt.text(
@@ -230,7 +296,7 @@ async function cmdInit(): Promise<void> {
       selectedCodes = await prompt.multi(
         'Which popular audience locales do you want to ship?',
         commonLocaleChoices('popular', config.sourceLocale),
-        'numbers or locale codes, comma separated'
+        localeSearchOptions()
       );
     }
     config.locales = resolveLocaleSelection({
@@ -243,7 +309,7 @@ async function cmdInit(): Promise<void> {
     const formalityLangs = config.locales.filter((l) => l !== config.sourceLocale && localeInfo(l).formalityMatters);
     if (formalityLangs.length) {
       config.voice.formality = (await prompt.pick(
-        `\n${formalityLangs.join(', ')} distinguish formal and informal address. Which does this product use?`,
+        `\n${summarise(formalityLangs)} distinguish formal and informal address. Which does this product use?`,
         [
           { value: 'auto', label: 'Let the translator decide per language', hint: 'consistent within each language' },
           { value: 'informal', label: 'Informal', hint: 'du, tu, tú — most consumer products' },
@@ -991,8 +1057,9 @@ ${c.bold('the rest')}
 ${c.bold('flags')}
   --cwd <dir>        run somewhere other than here
   --dry-run          on extract and apply: show, do not write
-  --locales de,fr    init: select locale codes (or "all"); translate: limit locales
-  --regions europe   init: select all common locales in comma-separated regions
+  --locales de,fr    init: locale codes, or "all" (audience locales) or
+                     "everything" (every language); translate: limit locales
+  --regions europe   init: every locale used in comma-separated regions
   --llm              translate without an agent, using ANTHROPIC_API_KEY or OPENAI_API_KEY
   --ui / --collect   canvas review, or read your ticks back out of review.md
   --prune            on extract: forget memory keys the code no longer calls

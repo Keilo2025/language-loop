@@ -164,7 +164,7 @@ export const TRANSLATION_GUIDANCE: Record<string, string> = {
   'zh-Hant-HK': 'Use Traditional Chinese wording natural to readers in Hong Kong.',
   'zh-Hant-TW': 'Use Traditional Chinese wording natural to readers in Taiwan.',
   'ar-001': 'Modern Standard Arabic, kept plain and contemporary — no classical flourishes.',
-  'ar-EG': 'Use wording an Egyptian reader finds natural; avoid classical constructions.',
+  'ar-EG': 'Use wording an Egyptian reader finds natural, avoiding classical constructions.',
   'ar-MA': 'Use Moroccan usage, including the French loanwords people actually say.',
   'ar-SA': 'Use Gulf usage, slightly more formal than Egyptian, still contemporary.',
   'de-AT': 'Use Austrian vocabulary — Jänner, not Januar.',

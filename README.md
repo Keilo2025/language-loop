@@ -17,18 +17,26 @@ npx language-loop apply       # validate and write safe translations
 npx language-loop audit       # read-only completeness report and ordered fixes
 ```
 
-During `init`, choose popular audience locales, select whole regions, add all 102 common
-modern written locales, or enter custom BCP-47 codes. Noninteractive setup supports the same
-paths:
+During `init`, pick from the popular audience locales, search the full catalogue by name
+(type `swahili`, `swiss`, `brazil`), select whole regions, take every language at once, or
+enter custom BCP-47 codes. Noninteractive setup supports the same paths:
 
 ```bash
 npx language-loop init --source en-US --locales all --agents cursor
+npx language-loop init --source en-US --locales everything --agents cursor
 npx language-loop init --source en-US --regions europe,americas --agents cursor
 npx language-loop init --source en-US --locales fr-CA,de-DE,ja-JP --agents cursor
 ```
 
-`all` means the checked-in practical catalogue of common modern written locales—not every
-historical or obscure ISO language.
+The catalogue covers every language ICU can name — every ISO 639-1 language plus the major
+regional varieties, ~385 entries in all. Names, plural categories and text direction are read
+out of the ICU data in your Node at runtime, so the list cannot silently go stale.
+
+`all` is the ~200 **audience locales**: the ones with a country attached, like `pt-BR` and
+`es-MX`. `everything` adds the long tail of bare languages such as `eo` or `bo`. Regional
+tags are the default on purpose — nobody speaks the language academy's version of their
+language, and every regional tag carries a dialect instruction into the translation brief
+telling your agent to write the everyday register rather than the textbook one.
 
 ---
 

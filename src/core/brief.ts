@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Config, Memory, WorkItem } from '../types.js';
 import { statePath } from './config.js';
-import { localeInfo } from './locales.js';
+import { DIALECT_RULE, localeInfo } from './locales.js';
 import type { MarketingLoopState } from './marketing.js';
 import { commandForStage } from './report.js';
 import { truncate } from './util.js';
@@ -55,6 +55,7 @@ export function writeBrief(cwd: string, input: BriefInput): { file: string; unit
   lines.push('## Voice');
   lines.push('');
   lines.push(`- Tone: ${config.voice.tone}`);
+  lines.push(`- Register: ${DIALECT_RULE}`);
   lines.push(`- Formality: ${formalityGuidance(config)}`);
   if (marketing.voice?.tone) lines.push(`- marketing-loop tone, which the translations must not contradict: ${marketing.voice.tone}`);
   if (marketing.voice?.banned?.length) {

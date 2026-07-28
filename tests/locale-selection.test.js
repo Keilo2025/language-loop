@@ -38,3 +38,20 @@ test('unknown and empty regions are rejected with accepted values', () => {
     /africa, americas, asia, europe, middle-east, oceania/,
   );
 });
+
+test('all stays dialect-first while everything opens the long tail', () => {
+  const audience = resolveLocaleSelection({ sourceLocale: 'en-US', mode: 'all' });
+  const everything = resolveLocaleSelection({ sourceLocale: 'en-US', mode: 'everything' });
+  assert.ok(everything.length > audience.length);
+  assert.ok(audience.includes('pt-BR'));
+  assert.ok(!audience.includes('pt'), 'all must not offer the bare language over the dialect');
+  assert.ok(everything.includes('eo'));
+  assert.equal(everything[0], 'en-US');
+  assert.equal(everything.filter((code) => code === 'en-US').length, 1);
+});
+
+test('a region now reaches its long-tail languages, not only the listed ones', () => {
+  const africa = resolveLocaleSelection({ sourceLocale: 'en-US', mode: 'regions', regions: ['africa'] });
+  assert.ok(africa.includes('sw-KE'));
+  assert.ok(africa.includes('ln'), 'Lingala should be reachable via Africa');
+});

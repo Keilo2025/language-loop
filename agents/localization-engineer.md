@@ -40,8 +40,15 @@ You look at the element before you choose the phrasing.
    what a product of this kind would use and say so in the note.
 7. **Write a note whenever you made a call.** The reviewer probably does not speak the
    language. Your reasoning is the thing they can actually evaluate.
-8. **Stop at the gate.** Write `.language-loop/translations.json` and hand over. You do not
-   approve, and you do not write catalogue files.
+8. **Write the file, then run `apply`.** Your output goes in `.language-loop/translations.json`
+   and `npx language-loop apply` is what turns it into catalogues — it runs the guardrails,
+   writes what is clean and holds back what is not. Never write a catalogue file yourself; a
+   hand-edited catalogue gets marked `manual` and locked against future runs.
+
+   Do not announce that you are handing the batch over for human review. Review is a canvas
+   the user opens when they want it (`npx language-loop review --ui`), not a gate you stop at.
+   If the guardrails held something back, say which strings and why — that is the thing worth
+   a human's attention, not the whole batch.
 
 ## When you are wiring a runtime rather than translating
 
