@@ -1,6 +1,6 @@
 {
   "name": "language-loop",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "A localization loop for vibe-coding agents. Scans code, extracts i18n keys, translates only what changed, and automatically holds unsafe translations back.",
   "type": "module",
   "license": "MIT",
