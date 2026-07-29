@@ -490,6 +490,51 @@ test('installing the Cursor command records Cursor for future stage handoffs', (
   assert.match(scan.stdout, /\/language-loop extract/);
 });
 
+test('installed agent command owns every remaining batch instead of handing the next stage back', () => {
+  const dir = project({});
+  saveConfig(dir, config({ agents: [] }));
+
+  const install = spawnSync(process.execPath, [
+    'dist/cli.js', 'install', '--cwd', dir, '--agents', 'cursor',
+  ], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+  assert.equal(install.status, 0, install.stderr);
+
+  const installedCommand = fs.readFileSync(path.join(dir, '.cursor/commands/language-loop.md'), 'utf8');
+  assert.match(
+    installedCommand,
+    /A stage argument chooses where the run starts, not where it stops/i,
+  );
+  assert.match(
+    installedCommand,
+    /CLI's displayed `next` step is your next internal action/i,
+  );
+  assert.match(
+    installedCommand,
+    /Only send a successful final response after\s+`audit` reports\s+complete/i,
+  );
+  assert.doesNotMatch(
+    installedCommand,
+    /In your final response, copy the CLI's displayed `next` command exactly/i,
+  );
+});
+
+test('packaged localization agent applies the same completion gate as the loop command', () => {
+  const instructions = fs.readFileSync(
+    path.join(process.cwd(), 'agents', 'localization-engineer.md'),
+    'utf8',
+  );
+
+  assert.match(instructions, /run `status`, then `audit`/i);
+  assert.match(instructions, /claim success only when `audit` reports complete/i);
+  assert.match(
+    instructions,
+    /finish every other pending locale before reporting (?:a|the) blocker/i,
+  );
+});
+
 test('non-interactive init can select all common audience locales', () => {
   const dir = project({});
   const run = spawnSync(process.execPath, [

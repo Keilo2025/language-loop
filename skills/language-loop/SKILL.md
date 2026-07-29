@@ -42,6 +42,13 @@ one failed. Repeat until nothing comes back. Continue across every batch and loc
 handing the loop back to the user. Finish one language before starting the next. The user is
 never the fallback approver.
 
+The stage named in the user's invocation is the starting point, not a stopping point.
+After every `apply`, treat a displayed `next` command as your next internal action and
+execute it immediately while work remains. When `translate` reports nothing left, run
+`status` and `audit`. A successful final response is allowed only after `audit` reports
+complete; if it reports a genuine blocker, finish every other pending locale before
+reporting that blocker.
+
 If there is no `language-loop.config.json`, run `npx language-loop init` first. It asks
 which agent the user codes in and which languages they want, and it needs a real terminal.
 Setup supports popular locales, whole regions, all common modern written locales, and custom

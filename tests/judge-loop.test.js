@@ -70,8 +70,8 @@ function project() {
   return dir;
 }
 
-function batchedProject(maxBatch = 1) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'll-batched-'));
+function batchedProject(maxBatch = 1, prefix = 'll-batched-') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 't', dependencies: { next: '14' } }));
   fs.mkdirSync(path.join(dir, 'app'));
   fs.writeFileSync(
@@ -205,13 +205,26 @@ test('a rejection comes back round carrying the reason it failed', () => {
 });
 
 test('apply continues to the next batch instead of handing the loop back to the user', () => {
-  const dir = batchedProject();
+  const dir = batchedProject(1, "ll batched '");
   approveCurrentBrief(dir);
+  const previousBatchId = readBatch(dir).id;
 
   const out = run(dir, ['apply']);
 
-  assert.match(out, /\/language-loop translate/);
+  const displayed = /^  (npx language-loop translate.*)$/m.exec(out)?.[1];
+  assert.ok(displayed, 'apply must display an executable internal continuation');
+  assert.match(displayed, /--cwd/);
+  assert.doesNotMatch(out, /\/language-loop translate/);
   assert.doesNotMatch(out, /\/language-loop status/);
+
+  const node = `'${process.execPath.replaceAll("'", "'\"'\"'")}'`;
+  const localContinuation = displayed.replace('npx language-loop', `${node} dist/cli.js`);
+  const continued = spawnSync('/bin/sh', ['-c', localContinuation], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+  assert.equal(continued.status, 0, continued.stderr || continued.stdout);
+  assert.notEqual(readBatch(dir).id, previousBatchId, 'continuation must create the next batch in the target project');
 });
 
 test('each translation batch contains only one language', () => {
@@ -234,6 +247,46 @@ test('the loop finishes one language before starting the next', () => {
 
   assert.match(nextBrief, /^### de-DE/m);
   assert.doesNotMatch(nextBrief, /^### fr-FR/m);
+
+  approveCurrentBrief(dir);
+  run(dir, ['apply']);
+  run(dir, ['translate']);
+  const followingBrief = fs.readFileSync(statePath(dir, 'brief.md'), 'utf8');
+  assert.match(followingBrief, /^### fr-FR/m);
+});
+
+test('a needs-human locale does not stop the loop from advancing to later locales', () => {
+  const dir = batchedProject(200);
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    if (attempt > 1) run(dir, ['translate']);
+    const batch = readBatch(dir);
+    assert.ok(batch.units.every((unit) => unit.locale === 'de-DE'));
+    writeCompleteArtifacts(
+      dir,
+      batch.units.map((unit) => ({
+        key: unit.key,
+        locale: unit.locale,
+        value: `DE rejected attempt ${attempt}`,
+      })),
+      batch.units.map((unit) => ({
+        key: unit.key,
+        locale: unit.locale,
+        ok: false,
+        reason: 'wrong meaning',
+      })),
+    );
+    run(dir, ['apply']);
+  }
+
+  const memory = readMemory(dir);
+  assert.ok(Object.values(memory.entries).every(
+    (entry) => entry.translations['de-DE']?.status === 'needs-human',
+  ));
+
+  run(dir, ['translate']);
+  const nextBrief = fs.readFileSync(statePath(dir, 'brief.md'), 'utf8');
+  assert.match(nextBrief, /^### fr-FR/m);
 });
 
 test('repeated judge rejections stop at the configured retry ceiling', () => {

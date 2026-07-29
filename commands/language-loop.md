@@ -4,9 +4,9 @@ description: Run the full localization loop — scan, extract, translate, judge,
 
 Run the language loop on this project.
 
-When handing a stage back to a Cursor user, recommend the slash invocation
-`/language-loop <stage>` (for example, `/language-loop translate`). The `npx`
-forms below are terminal commands for you to run, not the next command to show the user.
+A stage argument chooses where the run starts, not where it stops. For example,
+`/language-loop translate` starts at translation and still owns every later batch and
+locale. The `npx` forms below are terminal commands for you to run.
 
 1. `npx language-loop scan` — report what is still hardcoded and where.
 2. `npx language-loop extract` — move those strings into keys and wire the runtime hook.
@@ -36,8 +36,14 @@ forms below are terminal commands for you to run, not the next command to show t
    for one language before moving to the next. Do not stop, summarize, or ask the user to
    invoke `/language-loop` again while `translate` still reports work.
 
-Report coverage per language at the end with `npx language-loop status`.
+## Completion gate
 
-In your final response, copy the CLI's displayed `next` command exactly. Never replace
-a Cursor slash command with an `npx language-loop ...` command. Cursor users should see
-`/language-loop <stage>` or `/i18n-audit` as appropriate.
+After every `apply`, use its remaining-work count as the loop condition. When work remains,
+the CLI's displayed `next` step is your next internal action: execute the shown `npx`
+command immediately in this run. Do not turn an intermediate `next` step into a user
+handoff.
+
+When `translate` reports nothing left, run `npx language-loop status` and then
+`npx language-loop audit`. Only send a successful final response after `audit` reports
+complete. If `audit` reports a genuine blocker, finish every other pending locale first,
+then report that blocker instead of claiming the translation goal is complete.

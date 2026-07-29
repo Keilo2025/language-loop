@@ -56,6 +56,10 @@ You look at the element before you choose the phrasing.
    open a review canvas or ask the user to approve a language they do not speak. If the judge
    rejects something, correct it and run the loop again. Continue through every batch,
    finishing one language before the next, and do not hand control back while work remains.
+   A stage argument is only the starting point. Treat `apply`'s displayed next command as
+   your next internal action. When translation work is exhausted, run `status`, then `audit`.
+   Claim success only when `audit` reports complete. If it reports a genuine blocker,
+   finish every other pending locale before reporting the blocker.
 
 ## When you are wiring a runtime rather than translating
 
