@@ -73,6 +73,14 @@ const command = argv[0] ?? 'help';
 const flags = new Set(argv.filter((a) => a.startsWith('--')));
 const cwd = valueOf('--cwd') ?? process.cwd();
 
+// Handle --version and -v before command routing
+if (command === '--version' || command === '-v') {
+  const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { version: string };
+  console.log(pkg.version);
+  process.exit(0);
+}
+
 function valueOf(name: string): string | undefined {
   const eq = argv.find((a) => a.startsWith(`${name}=`));
   if (eq) return eq.slice(name.length + 1);
@@ -84,6 +92,15 @@ function valueOf(name: string): string | undefined {
 function listOf(name: string): string[] {
   const raw = valueOf(name);
   return raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : [];
+}
+
+function shellArg(value: string): string {
+  if (process.platform === 'win32') return `"${value}"`;
+  return `"${value.replace(/[\\$`"]/g, '\\$&')}"`;
+}
+
+function internalCommand(stage: string): string {
+  return `npx language-loop ${stage} --cwd ${shellArg(path.resolve(cwd))}`;
 }
 
 function commonLocaleChoices(tier: 'popular' | 'common', sourceLocale: string) {
@@ -1171,7 +1188,10 @@ function cmdApply(): void {
       remaining.length
         ? [
             `${remaining.length} translation(s) remain; continue the autonomous loop:`,
-            commandForStage(config, 'translate'),
+            // This is work for the agent already running the loop, not a slash
+            // command to hand back to a Cursor user. Giving the agent the
+            // executable terminal command keeps the next batch in this run.
+            internalCommand('translate'),
           ]
         : [commandForStage(config, 'status') + '  ' + c.dim('# coverage per language')]
     );
