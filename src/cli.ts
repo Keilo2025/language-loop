@@ -6,22 +6,24 @@ import { fileURLToPath } from 'node:url';
 
 import { CONFIG_FILE, defaultConfig, loadConfig, requireConfig, saveConfig, statePath } from './core/config.js';
 import { detect } from './core/detect.js';
-import { scanKeyUsage, scanRepo } from './core/scan.js';
-import { assignKeys } from './core/keys.js';
-import { applyExtraction, planExtraction } from './core/extract.js';
+import { scanRepo } from './core/scan.js';
 import {
-  adoptCatalogEdits, adoptSourceEdits, deadKeys, loadMemory, needsHuman, pendingWork,
-  pruneMemory, recordVerdicts, saveMemory,
-  localeCatalog, setFallback, sourceCatalog, stats, syncMemory,
+  adoptCatalogEdits, adoptSourceEdits, loadMemory, needsHuman, pendingWork,
+  recordVerdicts, saveMemory, sourceCatalog, stats,
 } from './core/memory.js';
 import { writeBrief } from './core/brief.js';
 import { writeJudgeBrief } from './core/judge.js';
 import { checkTranslations, partition } from './core/guardrails.js';
 import { applyDecisions, type Decision } from './core/apply.js';
-import { detectMarketingLoop, frozenTexts, marketingLoopPitch } from './core/marketing.js';
+import {
+  detectMarketingLoop,
+  inspectMarketingHandoff,
+  marketingLoopPitch,
+  requireMarketingKeys,
+} from './core/marketing.js';
 import { AGENTS, detectAgents, installAgents, uninstallAgents } from './core/install.js';
 import { wireRuntime } from './core/wire.js';
-import { Backup, revertLast } from './core/backup.js';
+import { revertLast } from './core/backup.js';
 import {
   AUDIENCE_LOCALES, COMMON_LOCALES, REGIONS, canonicalLocaleCode, localeInfo,
   isRtl, localesForRegions, searchLocales,
@@ -39,7 +41,13 @@ import { contextMap } from './core/context.js';
 import { ProviderRegistry } from './core/providers.js';
 import { GoogleTllmProvider } from './core/providers/google-tllm.js';
 import { OpenAiJudgeProvider } from './core/providers/openai-judge.js';
-import { runTranslationLoop } from './core/runner.js';
+import {
+  CONTENT_LOOP_API_VERSION,
+  extractLanguageLoop,
+  inspectLanguageLoop,
+  runLanguageLoop,
+  type LanguageLoopScopeInput,
+} from './orchestration.js';
 import { evaluateCorpus, loadEvalCandidates, loadEvalCorpus } from './core/eval.js';
 import { pseudoCatalog, type PseudoLocale } from './core/pseudo.js';
 import {
@@ -62,6 +70,7 @@ import {
 import type {
   BoundVerdict,
   Config,
+  MessageCategory,
   TranslationArtifact,
   TranslationBatch,
   TranslationUnit,
@@ -92,6 +101,27 @@ function valueOf(name: string): string | undefined {
 function listOf(name: string): string[] {
   const raw = valueOf(name);
   return raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : [];
+}
+
+function hasOption(name: string): boolean {
+  return argv.includes(name) || argv.some((value) => value.startsWith(`${name}=`));
+}
+
+function orchestrationScope(): Omit<LanguageLoopScopeInput, 'cwd'> {
+  const hasFilter =
+    hasOption('--categories') ||
+    hasOption('--groups') ||
+    hasOption('--keys');
+  return {
+    ...(hasFilter ? {
+      filter: {
+        categories: listOf('--categories') as MessageCategory[],
+        groups: listOf('--groups'),
+        keys: listOf('--keys'),
+      },
+    } : {}),
+    ...(hasOption('--locales') ? { locales: listOf('--locales') } : {}),
+  };
 }
 
 function shellArg(value: string): string {
@@ -179,6 +209,7 @@ async function main(): Promise<void> {
     case 'audit': return cmdAudit();
     case 'revert': return cmdRevert();
     case 'sync-marketing': return cmdSyncMarketing();
+    case 'orchestrate': return cmdOrchestrate();
     case 'help':
     case '--help':
     case '-h': return cmdHelp();
@@ -190,6 +221,138 @@ async function main(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+
+async function cmdOrchestrate(): Promise<void> {
+  const stage = argv[1] && !argv[1]!.startsWith('--') ? argv[1]! : 'status';
+  const json = flags.has('--json');
+  const scope = orchestrationScope();
+  try {
+    if (stage === 'status') {
+      const snapshot = inspectLanguageLoop({ cwd, ...scope });
+      if (json) {
+        console.log(JSON.stringify(snapshot, null, 2));
+      } else {
+        renderOrchestrationStatus(snapshot);
+      }
+      if (snapshot.phase !== 'complete') process.exitCode = 2;
+      return;
+    }
+
+    if (stage === 'extract') {
+      const result = extractLanguageLoop({
+        cwd,
+        filter: scope.filter,
+        keys: scope.keys,
+        dryRun: flags.has('--dry-run'),
+        prune: flags.has('--prune'),
+      });
+      if (json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        heading('Content Loop · language extraction');
+        console.log(`  status: ${result.status}`);
+        console.log(`  selected: ${result.filter.selectedKeys.length} key(s)`);
+        console.log(`  applied: ${result.applied.length}`);
+        console.log(`  open items: ${result.openItems.length}`);
+      }
+      if (result.status === 'open-items' || result.skipped.length) process.exitCode = 2;
+      return;
+    }
+
+    if (stage === 'translate') {
+      if (!flags.has('--llm')) {
+        orchestrationCliError(
+          'INVALID_STATE',
+          'orchestrate translate requires --llm or direct module adapters',
+          json,
+        );
+        return;
+      }
+      const config = requireConfig(cwd);
+      const registry = new ProviderRegistry()
+        .registerTranslator(new GoogleTllmProvider())
+        .registerJudge(new OpenAiJudgeProvider());
+      const translator = registry.translator(config.ai.translator);
+      const judge = registry.judge(config.ai.judge);
+      const result = await runLanguageLoop({
+        cwd,
+        ...scope,
+        dryRun: flags.has('--dry-run'),
+        translator: (batch, contexts) => translator.translate({ batch, contexts, config }),
+        judge: (batch, translations, units, contexts) =>
+          judge.judge({ batch, translations, units, contexts, config }),
+      });
+      if (json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        heading('Content Loop · language translation');
+        console.log(`  status: ${result.status}`);
+        console.log(`  selected: ${result.filter.selectedKeys.length} key(s)`);
+        for (const locale of result.progress) {
+          console.log(
+            `  ${locale.locale}: ${locale.accepted}/${locale.total} accepted` +
+            `${locale.marketingBlocked ? `, ${locale.marketingBlocked} waiting on marketing` : ''}` +
+            `${locale.needsHuman ? `, ${locale.needsHuman} need human review` : ''}`,
+          );
+        }
+      }
+      if (result.status !== 'complete') process.exitCode = 2;
+      return;
+    }
+
+    orchestrationCliError(
+      'INVALID_STATE',
+      `unknown orchestration stage "${stage}"; use status, extract, or translate`,
+      json,
+    );
+  } catch (error) {
+    const code =
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      typeof error.code === 'string'
+        ? error.code
+        : 'INVALID_STATE';
+    const raw = error instanceof Error ? error.message : String(error);
+    const message = raw.replace(new RegExp(`^${code}:\\s*`), '');
+    orchestrationCliError(code, message, json);
+  }
+}
+
+function orchestrationCliError(code: string, message: string, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify({
+      schemaVersion: 1,
+      apiVersion: CONTENT_LOOP_API_VERSION,
+      status: 'error',
+      error: { code, message },
+    }, null, 2));
+  } else {
+    console.error(`${code}: ${message}`);
+  }
+  process.exitCode = 1;
+}
+
+function renderOrchestrationStatus(
+  snapshot: ReturnType<typeof inspectLanguageLoop>,
+): void {
+  heading('Content Loop · language status');
+  console.log(`  phase: ${snapshot.phase}`);
+  console.log(`  next stage: ${snapshot.nextStage}`);
+  console.log(`  selected: ${snapshot.filter.selectedKeys.length} key(s)`);
+  console.log(`  hardcoded: ${snapshot.hardcoded}`);
+  if (snapshot.marketing.selectedUnresolvedKeys.length) {
+    console.log(
+      `  waiting on marketing: ${snapshot.marketing.selectedUnresolvedKeys.join(', ')}`,
+    );
+  }
+  for (const locale of snapshot.progress) {
+    console.log(
+      `  ${locale.locale}: ${locale.accepted}/${locale.total} accepted · ${locale.status}`,
+    );
+  }
+  if (snapshot.error) console.log(`  ${snapshot.error.code}: ${snapshot.error.message}`);
+}
 
 async function cmdInit(): Promise<void> {
   const detection = detect(cwd);
@@ -386,8 +549,8 @@ async function cmdInit(): Promise<void> {
     const marketing = detectMarketingLoop(cwd);
     if (marketing.installed) {
       console.log('\n' + c.green('marketing-loop is installed here.'));
-      console.log(c.dim('Good — the loops will hand off to each other. language-loop will skip any string'));
-      console.log(c.dim('marketing-loop still has an open rewrite for, and will carry your tone and banned'));
+      console.log(c.dim('Good — the loops will hand off to each other. language-loop will skip any catalogue key'));
+      console.log(c.dim('marketing-loop still has an unresolved rewrite for, and will carry your tone and banned'));
       console.log(c.dim('words into the translation brief.'));
       config.marketingLoop.enabled = true;
     } else {
@@ -498,37 +661,14 @@ function cmdScan(): void {
 
 function cmdExtract(): void {
   const config = requireConfig(cwd);
-  const memory = loadMemory(cwd, config.sourceLocale);
-  adoptCatalogEdits(cwd, memory, config);
-  adoptSourceEdits(cwd, memory, config);
-  const scan = scanRepo(cwd, config);
-
-  const marketing = detectMarketingLoop(cwd);
-  const frozen = frozenTexts(marketing, config);
-  const strings = scan.strings.filter((s) => !frozen.has(s.text));
-  const frozenCount = scan.strings.length - strings.length;
-
-  const reservedKeys = new Set<string>();
-  for (const locale of config.locales) {
-    for (const key of Object.keys(readCatalog(cwd, config, locale))) reservedKeys.add(key);
-  }
-  const keyed = assignKeys(strings, config, memory, reservedKeys);
-  const plan = planExtraction(cwd, keyed, config);
   const dryRun = flags.has('--dry-run');
-  const transaction = dryRun ? undefined : new Backup(cwd, 'extract');
+  const result = extractLanguageLoop({
+    cwd,
+    dryRun,
+    prune: flags.has('--prune'),
+  });
 
-  heading(`${plan.edits.length} string(s) will move into the catalogue`);
-  if (frozenCount) {
-    console.log(c.yellow(`  ${frozenCount} left alone — marketing-loop has an open rewrite for them.`));
-  }
-
-  let result: ReturnType<typeof applyExtraction>;
-  try {
-    result = applyExtraction(cwd, plan, config, dryRun, transaction);
-  } catch (error) {
-    transaction?.rollback();
-    throw error;
-  }
+  heading(`${result.filter.selectedKeys.length} string(s) selected for extraction`);
 
   const byFile = new Map<string, number>();
   for (const edit of result.applied) byFile.set(edit.file, (byFile.get(edit.file) ?? 0) + 1);
@@ -544,13 +684,13 @@ function cmdExtract(): void {
     }
   }
 
-  if (plan.openItems.length) {
-    heading(`${plan.openItems.length} left for you or your agent`);
-    for (const item of plan.openItems.slice(0, 10)) {
+  if (result.openItems.length) {
+    heading(`${result.openItems.length} left for you or your agent`);
+    for (const item of result.openItems.slice(0, 10)) {
       console.log(`  ${c.dim(`${item.file}:${item.line}`)} ${truncate(JSON.stringify(item.text), 50)}`);
       console.log(`    ${c.dim(item.reason)}`);
     }
-    if (plan.openItems.length > 10) console.log(c.dim(`  …and ${plan.openItems.length - 10} more, all listed in the brief`));
+    if (result.openItems.length > 10) console.log(c.dim(`  …and ${result.openItems.length - 10} more, all listed in the brief`));
   }
 
   if (dryRun) {
@@ -558,59 +698,14 @@ function cmdExtract(): void {
     return;
   }
 
-  let sync: ReturnType<typeof syncMemory>;
-  let dead: string[];
-  let pruned: string[];
-  try {
-    // Only remember what actually landed in the code.
-    const applied = new Set(result.applied.map((e) => e.key));
-    const landed = keyed.filter((k) => applied.has(k.key));
-    sync = syncMemory(memory, landed, config);
-
-    // What is genuinely gone, as opposed to merely already extracted. Checked
-    // against the keys the code actually calls, not against this scan — a key
-    // extracted last run is absent from the scan because the loop worked.
-    dead = deadKeys(memory, config, scanKeyUsage(cwd, config), new Set(keyed.map((k) => k.key)));
-    pruned = flags.has('--prune') ? pruneMemory(memory, dead) : [];
-
-    transaction!.capture(path.relative(cwd, statePath(cwd, 'memory.json')));
-    transaction!.capture(path.relative(cwd, statePath(cwd, 'open-items.json')));
-    writeJson(statePath(cwd, 'open-items.json'), plan.openItems);
-
-    const source = sourceCatalog(memory);
-    for (const locale of config.locales) {
-      const existing = readCatalog(cwd, config, locale);
-      if (locale === config.sourceLocale) {
-        const renderable = flags.has('--prune') ? source : { ...existing, ...source };
-        writeCatalog(cwd, config, locale, renderable, (rel) => transaction!.capture(rel));
-        continue;
-      }
-      const translated = localeCatalog(memory, locale, false);
-      const current = Object.fromEntries(
-        Object.entries(source).map(([key, value]) => {
-          const approved = translated[key];
-          setFallback(memory, key, locale, approved === undefined);
-          return [key, approved ?? value];
-        })
-      );
-      const renderable = flags.has('--prune') ? current : { ...existing, ...current };
-      writeCatalog(cwd, config, locale, renderable, (rel) => transaction!.capture(rel));
-    }
-    saveMemory(cwd, memory);
-    result.backupId = transaction!.commit();
-  } catch (error) {
-    transaction!.rollback();
-    throw error;
-  }
-
   heading('memory');
-  console.log(`  ${c.green('+')} ${sync.added.length} new key(s)`);
-  if (sync.changed.length) console.log(`  ${c.yellow('~')} ${sync.changed.length} key(s) whose English changed — their translations are now stale`);
-  console.log(`  ${c.dim('=')} ${sync.unchanged.length} unchanged`);
-  if (pruned.length) {
-    console.log(`  ${c.red('-')} ${pruned.length} key(s) the code no longer calls — dropped`);
-  } else if (dead.length) {
-    console.log(`  ${c.yellow('?')} ${dead.length} key(s) the code no longer calls — kept, use --prune to drop them`);
+  console.log(`  ${c.green('+')} ${result.memory.added.length} new key(s)`);
+  if (result.memory.changed.length) console.log(`  ${c.yellow('~')} ${result.memory.changed.length} key(s) whose English changed — their translations are now stale`);
+  console.log(`  ${c.dim('=')} ${result.memory.unchanged.length} unchanged`);
+  if (result.memory.pruned.length) {
+    console.log(`  ${c.red('-')} ${result.memory.pruned.length} key(s) the code no longer calls — dropped`);
+  } else if (result.memory.dead.length) {
+    console.log(`  ${c.yellow('?')} ${result.memory.dead.length} key(s) the code no longer calls — kept, use --prune to drop them`);
   }
   if (result.wiringAdded) console.log(`  ${c.green('+')} ${result.wiringAdded} import(s) and hook(s) added`);
   if (result.backupId) console.log(`\n  ${c.dim(`backed up — ${commandForStage(config, 'revert')}  undoes this`)}`);
@@ -635,12 +730,19 @@ async function cmdTranslate(): Promise<void> {
   const only = listOf('--locales');
   const work = pendingWork(memory, config, only);
   const marketing = detectMarketingLoop(cwd);
-  const frozen = frozenTexts(marketing, config);
-  const usable = work.filter((w) => !frozen.has(w.source));
+  const marketingKeys = requireMarketingKeys(cwd, config, memory);
+  const frozen = work.filter((item) => marketingKeys.has(item.key));
+  const usable = work.filter((item) => !marketingKeys.has(item.key));
 
   if (!usable.length) {
-    heading('nothing to translate');
-    console.log(c.dim('Every key has an approved translation in every language. Add a page and run again.'));
+    if (frozen.length) {
+      heading('waiting for marketing review');
+      console.log(c.yellow(`${frozen.length} translation key(s) are waiting for marketing review.`));
+      console.log('Run npx marketing-loop review --ui, then npx marketing-loop apply.');
+    } else {
+      heading('nothing to translate');
+      console.log(c.dim('Every key has an approved translation in every language. Add a page and run again.'));
+    }
     saveMemory(cwd, memory);
     return;
   }
@@ -676,7 +778,7 @@ async function cmdTranslate(): Promise<void> {
     batch: manifest,
     marketing,
     openItems,
-    frozen: work.filter((w) => frozen.has(w.source)).map((w) => w.source),
+    frozen,
   });
   saveMemory(cwd, memory);
 
@@ -747,26 +849,20 @@ async function cmdRun(): Promise<void> {
     );
   }
   const config = requireConfig(cwd);
-  const memory = loadMemory(cwd, config.sourceLocale);
-  adoptCatalogEdits(cwd, memory, config);
-  adoptSourceEdits(cwd, memory, config);
   const registry = new ProviderRegistry()
     .registerTranslator(new GoogleTllmProvider())
     .registerJudge(new OpenAiJudgeProvider());
   const translator = registry.translator(config.ai.translator);
   const judge = registry.judge(config.ai.judge);
   const dryRun = flags.has('--dry-run');
-  const summary = await runTranslationLoop({
+  const summary = await runLanguageLoop({
     cwd,
-    memory,
-    config,
     dryRun,
-    locales: listOf('--locales'),
+    ...(hasOption('--locales') ? { locales: listOf('--locales') } : {}),
     translator: (batch, contexts) => translator.translate({ batch, contexts, config }),
     judge: (batch, translations, units, contexts) =>
       judge.judge({ batch, translations, units, contexts, config }),
   });
-  if (!dryRun && summary.batches === 0) saveMemory(cwd, memory);
 
   heading(dryRun ? 'end-to-end LLM dry run' : 'end-to-end LLM run');
   console.log(`  provider: ${translator.id} → ${judge.id}`);
@@ -781,8 +877,16 @@ async function cmdRun(): Promise<void> {
       `  ${c.yellow(String(summary.needsHuman))} translation(s) reached ai.maxAttempts and need native review`
     );
   }
+  if (summary.marketingBlocked) {
+    console.log(
+      `  ${c.yellow(String(summary.marketingBlocked))} translation key(s) are waiting for marketing review`
+    );
+  }
+  if (summary.status === 'waiting-marketing') {
+    console.log('  Run npx marketing-loop review --ui, then npx marketing-loop apply.');
+  }
   console.log(`  status: ${summary.status}`);
-  if (summary.status !== 'complete') process.exitCode = 2;
+  if (summary.status !== 'complete' && summary.status !== 'waiting-marketing') process.exitCode = 2;
 }
 
 function cmdEval(): void {
@@ -1244,8 +1348,23 @@ function cmdStatus(): void {
     if (stuck.length > 8) console.log(c.dim(`    …and ${stuck.length - 8} more`));
   }
 
-  const marketing = detectMarketingLoop(cwd);
-  console.log(`  marketing-loop: ${marketing.installed ? c.green('installed') : c.dim('not installed')}${marketing.pendingTexts.length ? c.yellow(` — ${marketing.pendingTexts.length} copy rewrite(s) pending, those strings are frozen`) : ''}`);
+  const marketing = inspectMarketingHandoff(cwd, config, memory);
+  const marketingDetail = !marketing.compatible
+    ? c.yellow(' — incompatible')
+    : marketing.unresolvedKeys.size
+      ? c.yellow(` — waiting on marketing (${marketing.unresolvedKeys.size} unresolved key(s))`)
+      : '';
+  console.log(`  marketing-loop: ${marketing.installed ? c.green('installed') : c.dim('not installed')}${marketingDetail}`);
+
+  if (!marketing.compatible) {
+    nextStep(['npx marketing-loop propose']);
+    return;
+  }
+  if (marketing.unresolvedKeys.size) {
+    console.log(`  ${c.dim('keys:')} ${[...marketing.unresolvedKeys].slice(0, 10).join(', ')}${marketing.unresolvedKeys.size > 10 ? '…' : ''}`);
+    nextStep(['npx marketing-loop review --ui && npx marketing-loop apply']);
+    return;
+  }
 
   if (scan.strings.length || work.length) {
     nextStep([
@@ -1329,40 +1448,76 @@ function cmdRevert(): void {
 
 function cmdSyncMarketing(): void {
   const config = loadConfig(cwd);
-  const state = detectMarketingLoop(cwd);
+  const installation = detectMarketingLoop(cwd);
 
-  if (!state.installed) {
-    console.log('\n' + marketingLoopPitch() + '\n');
+  heading('marketing-loop diagnostics');
+  console.log(`  installation: ${installation.installed ? 'installed' : 'not installed'}`);
+  console.log(`  run: ${installation.hasRun ? 'present' : 'absent'}`);
+
+  if (!installation.installed) {
+    console.log('  handoff schema: not available');
+    console.log('  scope: not available');
+    console.log('  unresolved keys: 0');
+    console.log('  stale key/hash/file mismatches: none');
+    console.log('  next: npx marketing-loop install');
     return;
   }
 
-  heading('marketing-loop');
-  console.log(`  installed${state.hasRun ? ', and it has run here' : ', not run yet'}`);
-  if (state.audience) console.log(`  audience: ${state.audience}`);
-  if (state.voice?.tone) console.log(`  tone: ${state.voice.tone}`);
-  if (state.voice?.banned?.length) console.log(`  banned words: ${state.voice.banned.join(', ')}`);
-  console.log(`  ${state.pendingTexts.length} copy rewrite(s) pending`);
+  if (installation.audience) console.log(`  audience: ${installation.audience}`);
+  if (installation.voice?.tone) console.log(`  tone: ${installation.voice.tone}`);
+  if (installation.voice?.banned?.length) console.log(`  banned words: ${installation.voice.banned.join(', ')}`);
 
   if (config) {
     config.marketingLoop.enabled = true;
-    if (state.voice?.tone && config.voice.tone.startsWith('plain and direct')) {
-      config.voice.tone = state.voice.tone;
+    if (installation.voice?.tone && config.voice.tone.startsWith('plain and direct')) {
+      config.voice.tone = installation.voice.tone;
       console.log(`\n  ${c.green('~')} adopted marketing-loop's tone into ${CONFIG_FILE}`);
     }
     saveConfig(cwd, config);
   }
 
-  if (state.pendingTexts.length) {
-    console.log('');
-    console.log(c.yellow('  Those strings are frozen. Approve or reject the rewrites first:'));
-    console.log('    npx marketing-loop review --ui');
-    console.log('    npx marketing-loop apply');
-    const extractCommand = config ? commandForStage(config, 'extract') : 'npx language-loop extract';
-    console.log(c.dim(`  Then come back and run  ${extractCommand}  to pick up the new English.`));
-  } else {
-    console.log('\n  Nothing pending. The English is settled — safe to translate.');
-    nextStep([config ? commandForStage(config, 'translate') : 'npx language-loop translate']);
+  if (!config) {
+    console.log('  handoff schema: not available');
+    console.log('  scope: not available');
+    console.log('  unresolved keys: unavailable');
+    console.log('  stale key/hash/file mismatches: none');
+    console.log('  next: npx language-loop init');
+    return;
   }
+
+  if (!installation.hasRun) {
+    console.log('  handoff schema: not available');
+    console.log('  scope: not available');
+    console.log('  unresolved keys: 0');
+    console.log('  stale key/hash/file mismatches: none');
+    console.log('  next: npx marketing-loop propose');
+    return;
+  }
+
+  const memory = loadMemory(cwd, config.sourceLocale);
+  const handoff = inspectMarketingHandoff(cwd, config, memory);
+  if (!handoff.compatible) {
+    console.log('  handoff schema: incompatible');
+    console.log('  scope: unable to validate');
+    console.log('  unresolved keys: unavailable');
+    console.log(`  stale key/hash/file mismatches: ${handoff.error ?? 'unknown incompatibility'}`);
+    console.log('  next: npx marketing-loop propose');
+    return;
+  }
+
+  console.log('  handoff schema: compatible');
+  console.log('  scope: agreed');
+  console.log(`  unresolved keys: ${handoff.unresolvedKeys.size}`);
+  if (handoff.unresolvedKeys.size) {
+    console.log('  first ten keys:');
+    for (const key of [...handoff.unresolvedKeys].slice(0, 10)) console.log(`    ${key}`);
+  }
+  console.log('  stale key/hash/file mismatches: none');
+  console.log(
+    handoff.unresolvedKeys.size
+      ? '  next: npx marketing-loop review --ui'
+      : `  next: ${commandForStage(config, 'translate')}`
+  );
 }
 
 function cmdHelp(): void {
@@ -1382,9 +1537,17 @@ ${c.bold('the loop')}
   npx language-loop judge            your agent grades its own translations
   npx language-loop apply            write what passed; send the rest back round
   npx language-loop run --llm        Google TLLM → guardrails → GPT-5.6 judge → apply
+  npx language-loop orchestrate status|extract|translate
+                                        stable Content Loop module/JSON CLI mirror
   npx language-loop eval             score a JSONL candidate set against the corpus
   npx language-loop pseudo           generate syntax-safe en-XA and ar-XB catalogues
   npx language-loop visual-check     screenshot overflow and RTL browser validation
+
+${c.bold('with marketing-loop (optional)')}
+  after extract: npx marketing-loop propose → review --ui → apply
+  marketing-loop 0.5+ edits the source catalogue only; language-loop owns extraction and target catalogues
+  exact catalogue keys waiting for marketing pause; identical text under other keys does not
+  Content Loop runs continue until every selected language is judge-accepted or explicitly blocked
 
 ${c.bold('the rest')}
   npx language-loop status           coverage per language, what is stale
@@ -1401,6 +1564,11 @@ ${c.bold('flags')}
                      "everything" (every language); limit translate/run/pseudo/visual
   --regions europe   init: every locale used in comma-separated regions
   --llm              end-to-end: Google TLLM plus independent GPT-5.6 Terra judging
+  --categories cta,headline
+                     orchestrate: select CTA/button, headline, navigation, label, and other categories
+  --groups hero,checkout
+                     orchestrate: select exact catalogue namespaces/content groups
+  --keys hero.start  orchestrate: select exact canonical catalogue keys
   --candidates <file> eval: JSONL translations keyed by corpus id
   --corpus <file>     eval: override the bundled multilingual corpus
   --out <file>        eval/visual: machine-readable report path

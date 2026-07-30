@@ -6,6 +6,7 @@ import type {
   TranslationBatch,
   TranslationUnit,
   Verdict,
+  LanguageProgress,
 } from '../types.js';
 import {
   bindTranslationArtifact,
@@ -17,10 +18,16 @@ import {
 } from './batch.js';
 import { applyDecisions, type Decision } from './apply.js';
 import { checkTranslations, partition } from './guardrails.js';
-import { needsHuman, pendingWork, recordVerdicts } from './memory.js';
+import { pendingWork, recordVerdicts } from './memory.js';
 import { statePath } from './config.js';
 import { writeJson } from './util.js';
 import { contextMap } from './context.js';
+import { requireMarketingKeys } from './marketing.js';
+import {
+  languageProgress,
+  resolveMessageFilter,
+  resolveTargetLocales,
+} from './selection.js';
 
 export type RunnerTranslator = (
   batch: TranslationBatch,
@@ -42,15 +49,39 @@ export interface RunTranslationLoopInput {
   judge: RunnerJudge;
   dryRun?: boolean;
   locales?: string[];
+  /**
+   * Exact canonical catalogue keys this run may process. Omitted preserves the
+   * historical all-key behavior; an explicit empty array selects no work.
+   */
+  keys?: string[];
+  /** Called before providers run and after every completed batch. */
+  onProgress?: (event: TranslationLoopProgressEvent) => void | Promise<void>;
 }
 
+export type RunTranslationLoopStatus =
+  | 'complete'
+  | 'needs-human'
+  | 'no-progress'
+  | 'waiting-marketing';
+
 export interface RunTranslationLoopSummary {
-  status: 'complete' | 'needs-human' | 'no-progress';
+  status: RunTranslationLoopStatus;
   batches: number;
   translated: number;
   applied: number;
   rework: number;
   needsHuman: number;
+  marketingBlocked: number;
+  selectedKeys: string[];
+  progress: LanguageProgress[];
+}
+
+export interface TranslationLoopProgressEvent {
+  schemaVersion: 1;
+  status: 'running' | RunTranslationLoopStatus;
+  batches: number;
+  selectedKeys: string[];
+  progress: LanguageProgress[];
 }
 
 /**
@@ -62,6 +93,39 @@ export async function runTranslationLoop(
 ): Promise<RunTranslationLoopSummary> {
   const { cwd, config, translator, judge } = input;
   const memory = input.dryRun ? structuredClone(input.memory) : input.memory;
+  const selected = resolveMessageFilter(
+    memory.entries,
+    input.keys === undefined ? undefined : { keys: input.keys },
+  );
+  const selectedKeys = new Set(selected.selectedKeys);
+  const locales = resolveTargetLocales(config, input.locales);
+  const marketingKeys = requireMarketingKeys(cwd, config, memory);
+  const selectedMarketingKeys = new Set(
+    [...marketingKeys].filter((key) => selectedKeys.has(key)),
+  );
+  const allPendingWork = () =>
+    locales.length
+      ? pendingWork(memory, config, locales)
+        .filter((item) => selectedKeys.has(item.key))
+      : [];
+  const eligibleWork = () =>
+    allPendingWork().filter((item) => !selectedMarketingKeys.has(item.key));
+  const currentProgress = () =>
+    languageProgress(memory, locales, selectedKeys, selectedMarketingKeys);
+  const syncSummaryState = (summary: RunTranslationLoopSummary): void => {
+    summary.progress = currentProgress();
+    summary.needsHuman = summary.progress
+      .reduce((total, locale) => total + locale.needsHuman, 0);
+    summary.marketingBlocked = selectedMarketingKeys.size;
+  };
+  const terminalStatus = (): RunTranslationLoopStatus | null => {
+    if (eligibleWork().length) return null;
+    const progress = currentProgress();
+    if (progress.some((locale) => locale.pending > 0)) return 'no-progress';
+    if (progress.some((locale) => locale.marketingBlocked > 0)) return 'waiting-marketing';
+    if (progress.some((locale) => locale.needsHuman > 0)) return 'needs-human';
+    return 'complete';
+  };
   const summary: RunTranslationLoopSummary = {
     status: 'complete',
     batches: 0,
@@ -69,19 +133,39 @@ export async function runTranslationLoop(
     applied: 0,
     rework: 0,
     needsHuman: 0,
+    marketingBlocked: selectedMarketingKeys.size,
+    selectedKeys: selected.selectedKeys,
+    progress: currentProgress(),
   };
-  const initial = pendingWork(memory, config, input.locales);
+  const emitProgress = async (
+    status: TranslationLoopProgressEvent['status'],
+  ): Promise<void> => {
+    syncSummaryState(summary);
+    await input.onProgress?.({
+      schemaVersion: 1,
+      status,
+      batches: summary.batches,
+      selectedKeys: [...summary.selectedKeys],
+      progress: structuredClone(summary.progress),
+    });
+  };
+  const initial = eligibleWork();
   const hardLimit = Math.max(
     1,
     initial.length * Math.max(1, config.ai.maxAttempts) + Math.ceil(initial.length / Math.max(1, config.maxBatch))
   );
+  const initialTerminal = terminalStatus();
+  await emitProgress(initialTerminal ?? 'running');
+  if (initialTerminal) {
+    summary.status = initialTerminal;
+    return summary;
+  }
 
   for (let iteration = 0; iteration < hardLimit; iteration++) {
-    const pending = pendingWork(memory, config, input.locales);
+    const pending = eligibleWork();
     if (!pending.length) {
-      const terminal = needsHuman(memory).length;
-      summary.needsHuman = terminal;
-      summary.status = terminal ? 'needs-human' : 'complete';
+      summary.status = terminalStatus() ?? 'no-progress';
+      await emitProgress(summary.status);
       return summary;
     }
     const before = workFingerprint(pending);
@@ -124,7 +208,6 @@ export async function runTranslationLoop(
     );
     const transition = recordVerdicts(memory, verdictArtifact.verdicts, values, config);
     summary.rework += transition.rework;
-    summary.needsHuman += transition.needsHuman;
 
     const decisions: Record<string, Decision> = {};
     for (const verdict of verdictArtifact.verdicts) {
@@ -140,6 +223,8 @@ export async function runTranslationLoop(
     }
     const applied = applyDecisions(cwd, memory, config, decisions, {
       dryRun: input.dryRun,
+      keys: selectedKeys,
+      locales: new Set(locales),
     });
     summary.applied += applied.approved;
 
@@ -150,15 +235,24 @@ export async function runTranslationLoop(
       writeJson(statePath(cwd, 'verdicts.json'), verdictArtifact);
     }
 
-    const after = workFingerprint(pendingWork(memory, config, input.locales));
+    const after = workFingerprint(eligibleWork());
     if (after === before) {
       summary.status = 'no-progress';
+      await emitProgress(summary.status);
       return summary;
     }
+    const terminal = terminalStatus();
+    if (terminal) {
+      summary.status = terminal;
+      await emitProgress(terminal);
+      return summary;
+    }
+    await emitProgress('running');
   }
 
-  summary.needsHuman = needsHuman(memory).length;
-  summary.status = summary.needsHuman ? 'needs-human' : 'no-progress';
+  syncSummaryState(summary);
+  summary.status = terminalStatus() ?? 'no-progress';
+  await emitProgress(summary.status);
   return summary;
 }
 

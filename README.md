@@ -393,11 +393,13 @@ You get:
 
 ---
 
-## Working with marketing-loop
+## Content Loop and marketing-loop
 
-If [`marketing-loop`](https://github.com/Keilo2025/marketing-loop) is installed, the two hand
-off to each other. If it is not, `language-loop` will explain once why you might want it, and
-then get out of the way.
+[`marketing-loop`](https://github.com/Keilo2025/marketing-loop) 0.5+ is the primary Content
+Loop application. It imports Language Loop's versioned orchestration module for extraction,
+translation, judging and target-catalogue writes; the two products keep separate engines and
+safety gates. Language Loop remains a complete standalone localization loop when Marketing
+Loop is not installed.
 
 **The order is not arbitrary.** `language-loop` translates whatever the English currently says.
 If the English is a feature list — *"Advanced analytics dashboard with real-time sync"* — you
@@ -405,21 +407,68 @@ are about to pay to have that sentence carefully reproduced in nine languages, a
 when someone rewrites it. Worse: until they do, your German users read the old promise and your
 English users read the new one.
 
-So, with both installed:
+The lifecycle is always language scan → extract → optional marketing review → translate:
 
-1. **`marketing-loop` fixes the source copy**, from the code rather than the README, with a
-   human approving every rewrite.
-2. **`language-loop` refuses to translate any string with an open rewrite.** They appear in the
-   brief as frozen, with the reason.
-3. **Your tone, banned words and audience carry into the translation brief**, so the nine
-   languages sound like the one you approved.
+```bash
+npx language-loop scan
+npx language-loop extract
+npx marketing-loop propose     # optional; only when marketing-loop is installed
+npx marketing-loop review --ui
+npx marketing-loop apply
+npx language-loop translate
+npx language-loop judge
+npx language-loop apply
+```
+
+`language-loop` owns extraction from code and every target catalogue. `marketing-loop` edits
+only the source catalogue after extraction, so it never makes source-copy decisions from raw
+code or touches translated catalogues. If a marketing proposal is unresolved, Language Loop
+pauses only that exact catalogue key—not every matching string. Tone, banned words, and
+audience then carry into the translation brief.
+
+The key-based handshake requires `marketing-loop` 0.5+ and `language-loop` 0.4+. Upgrade both
+together. Language Loop refuses legacy pending marketing state instead of guessing by raw text.
+Marketing Loop capability-checks `CONTENT_LOOP_API_VERSION === 1` before sending a selection.
+An optional handoff selection contains `{ filter, resolvedKeys, targetLocales }`; Language Loop
+validates it against the current catalogue and treats it as authoritative. A caller-supplied
+scope that disagrees fails closed.
+
+Content Loop can run a focused slice instead of every message. Select any union of categories,
+exact namespace/content groups, and canonical keys:
+
+```bash
+npx language-loop orchestrate status \
+  --categories cta,headline,navigation \
+  --groups checkout \
+  --keys account.delete \
+  --locales de-DE,fr-CA \
+  --json
+
+npx language-loop orchestrate extract --categories cta,headline
+npx language-loop orchestrate translate --categories cta,headline \
+  --locales de-DE,fr-CA --llm --json
+```
+
+`button` and `cta` select CTA slots; `headline` selects heading/title slots; `navigation`
+selects nav labels. Groups are exact namespaces and keys are exact canonical catalogue keys.
+Unknown explicit groups or keys are rejected rather than widening the run. The selected key
+set is frozen through pending-work discovery, batches, retries, judging and catalogue writes,
+so providers and target catalogues never see an out-of-scope message.
+
+`status`, `extract` and `translate` mirror the public orchestration module with schema-1 JSON.
+Translation reports progress per selected locale and keeps retrying rejected candidates. It
+reports `complete` only when every selected key in every selected locale is judge-approved or
+an existing manual translation. Unresolved marketing work, a guardrail requiring human
+judgement, or a non-progressing provider is reported explicitly; a partial batch is never
+reported as complete.
 
 ```
 npx language-loop sync-marketing
 ```
 
-Prints the handshake state and tells you which side needs attention. Nothing breaks without
-marketing-loop — the freeze simply never engages.
+Prints schema compatibility, scope agreement, and exact unresolved keys. Nothing breaks without
+marketing-loop: language-loop remains a complete standalone scan, extract, translate, judge,
+and apply loop.
 
 ---
 
@@ -628,6 +677,57 @@ mirrored `ar-XB` catalogue and configured RTL locales.
 
 ## Programmatic use
 
+Marketing Loop and other Content Loop hosts should use the versioned facade:
+
+```js
+import {
+  CONTENT_LOOP_API_VERSION,
+  inspectLanguageLoop,
+  extractLanguageLoop,
+  runLanguageLoop,
+} from 'language-loop/orchestration';
+
+if (CONTENT_LOOP_API_VERSION !== 1) {
+  throw new Error('Selection-aware Language Loop is required');
+}
+
+const selection = {
+  categories: ['cta', 'headline'],
+  groups: ['checkout'],
+  keys: ['account.delete'],
+};
+
+const before = inspectLanguageLoop({
+  cwd: process.cwd(),
+  filter: selection,
+  locales: ['de-DE', 'fr-CA'],
+});
+
+const extraction = extractLanguageLoop({
+  cwd: process.cwd(),
+  filter: selection,
+});
+
+const result = await runLanguageLoop({
+  cwd: process.cwd(),
+  filter: selection,
+  locales: ['de-DE', 'fr-CA'],
+  translator,
+  judge,
+  onProgress(event) {
+    // schemaVersion, status, batches, selectedKeys and per-locale progress
+    publishLifecycle(event);
+  },
+});
+```
+
+The facade returns `schemaVersion: 1` and `apiVersion: 1` on every lifecycle result. Omit
+`filter`, `keys` and `locales` to preserve the 0.4 behavior: all catalogue keys and all
+configured target locales. For a pre-resolved UI selection, pass `keys` directly; filters and
+keys may both be supplied only when they resolve to the same canonical set.
+
+The low-level 0.4 exports remain available for custom integrations:
+
 ```js
 import {
   scanRepo, assignKeys, planExtraction, applyExtraction,
@@ -645,8 +745,9 @@ const keyed = assignKeys(strings, config, memory);
 const work = pendingWork(memory, config);
 ```
 
-Every stage is exported, so the loop drops into CI, a git hook, or an MCP server. Automatic
-guardrails and the AI judge are the default and require no translation approval from the user.
+Every stage remains exported, so the loop drops into CI, a git hook, or an MCP server.
+Automatic guardrails and the AI judge are the default and require no translation approval
+from the user.
 
 ---
 

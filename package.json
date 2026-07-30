@@ -1,6 +1,6 @@
 {
   "name": "language-loop",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "A localization loop for vibe-coding agents. Scans code, extracts i18n keys, translates only what changed, and automatically holds unsafe translations back.",
   "type": "module",
   "license": "MIT",
@@ -33,7 +33,8 @@
   },
   "exports": {
     ".": "./dist/index.js",
-    "./locales": "./dist/core/locales.js"
+    "./locales": "./dist/core/locales.js",
+    "./orchestration": "./dist/orchestration.js"
   },
   "files": [
     "dist",
@@ -49,6 +50,8 @@
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "watch": "tsc -p tsconfig.json --watch",
     "test": "npm run build && node --test \"tests/**/*.test.js\"",
+    "test:contract": "npm run build && node --test tests/marketing-handoff.test.js",
+    "test:orchestration": "npm run build && node --test tests/orchestration.test.js tests/runner.test.js",
     "loop": "node dist/cli.js",
     "prepack": "npm run build",
     "prepublishOnly": "npm test",

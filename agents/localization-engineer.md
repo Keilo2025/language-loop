@@ -23,6 +23,23 @@ about 40% shorter. A three-word English button often needs a two-word German one
 the longer phrase is wrong, but because it wraps, and a wrapped button is a bug you caused.
 You look at the element before you choose the phrasing.
 
+## Marketing handoff
+
+Follow the lifecycle: `language-loop scan` → `language-loop extract` → optional
+`marketing-loop propose` → `marketing-loop review --ui` → `marketing-loop apply` →
+`language-loop translate` → `language-loop judge` → `language-loop apply`.
+
+When installed, marketing-loop 0.5+ is the primary Content Loop application and calls the
+versioned Language Loop orchestration module directly. language-loop still owns extraction
+from code and every target catalogue; marketing-loop edits only the source catalogue after
+extraction. Pause only exact unresolved catalogue keys, never every matching source string.
+If marketing-loop is absent, language-loop remains standalone.
+
+Honor a user-selected message filter exactly. CTA/button, headline, navigation and label
+categories may be combined with exact content groups and canonical keys. Never inspect,
+translate, judge or apply an out-of-scope message. Continue until every selected locale is
+judge-approved or manual; a partial selected batch is not completion.
+
 ## How you work
 
 1. **Read the whole brief first.** It carries the voice constraints, the formality decision,
@@ -78,7 +95,7 @@ are import-order problems and live in the entry file.
 
 ## What you refuse
 
-You do not machine-translate a batch you have not read. You do not translate a string that
-marketing-loop has an open rewrite for — that work gets thrown away twice. You do not edit a
+You do not machine-translate a batch you have not read. You do not translate an exact catalogue
+key that marketing-loop has an unresolved rewrite for—that work gets thrown away twice. You do not edit a
 catalogue entry a human wrote by hand; theirs outranks yours, permanently. You do not ask the
 vibe coder to approve translations; the AI judge owns that decision.

@@ -3,6 +3,7 @@ import { statePath } from './config.js';
 import { readCatalog, orphanKeys } from './catalog.js';
 import { checkTranslations } from './guardrails.js';
 import { loadMemory, sourceCatalog } from './memory.js';
+import { inspectMarketingHandoff } from './marketing.js';
 import { scanKeyUsage, scanRepo } from './scan.js';
 import { readJson } from './util.js';
 
@@ -17,7 +18,9 @@ export type FindingKind =
   | 'orphan'
   | 'integrity'
   | 'source-copy'
-  | 'runtime-locale-gap';
+  | 'runtime-locale-gap'
+  | 'marketing-pending'
+  | 'marketing-incompatible';
 
 export type SuggestedAction =
   | 'extract'
@@ -26,7 +29,8 @@ export type SuggestedAction =
   | 'apply'
   | 'retranslate'
   | 'prune'
-  | 'setup';
+  | 'setup'
+  | 'marketing-review';
 
 export interface CompletenessFinding {
   kind: FindingKind;
@@ -60,6 +64,7 @@ const ACTION_ORDER: SuggestedAction[] = [
   'extract',
   'manual-extract',
   'setup',
+  'marketing-review',
   'translate',
   'retranslate',
   'apply',
@@ -69,6 +74,7 @@ const ACTION_ORDER: SuggestedAction[] = [
 export function analyzeCompleteness(cwd: string, config: Config): CompletenessReport {
   const findings: CompletenessFinding[] = [];
   const memory = loadMemory(cwd, config.sourceLocale);
+  const marketing = inspectMarketingHandoff(cwd, config, memory);
   const scanned = scanRepo(cwd, config);
   const usedKeys = scanKeyUsage(cwd, config);
   const memorySource = sourceCatalog(memory);
@@ -79,6 +85,29 @@ export function analyzeCompleteness(cwd: string, config: Config): CompletenessRe
       .filter(([key, entry]) => diskSource[key]?.trim() && diskSource[key] !== entry.source)
       .map(([key]) => key)
   );
+
+  if (!marketing.compatible) {
+    findings.push({
+      kind: 'marketing-incompatible',
+      severity: 'block',
+      message: `${marketing.error ?? 'marketing-loop handoff is incompatible'}. Run npx marketing-loop propose to regenerate it.`,
+      files: ['.marketing-loop/handoff.json'],
+      locales: [],
+      keys: [],
+      action: 'translate',
+    });
+  } else if (marketing.unresolvedKeys.size) {
+    const keys = [...marketing.unresolvedKeys];
+    findings.push({
+      kind: 'marketing-pending',
+      severity: 'warn',
+      message: `${keys.length} translation key(s) are waiting on marketing review.`,
+      files: ['.marketing-loop/handoff.json'],
+      locales: [],
+      keys,
+      action: 'marketing-review',
+    });
+  }
 
   if (scanned.strings.length) {
     findings.push({
@@ -294,6 +323,8 @@ export function analyzeCompleteness(cwd: string, config: Config): CompletenessRe
     'approved-unapplied',
     'integrity',
     'runtime-locale-gap',
+    'marketing-pending',
+    'marketing-incompatible',
   ]);
   return {
     complete: !findings.some((finding) => incompleteKinds.has(finding.kind)),

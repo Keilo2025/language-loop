@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Config } from '../types.js';
-import { exists, readJson, writeJson } from './util.js';
+import { exists, posix, readJson, sha256, writeJson } from './util.js';
 import { namespaceOf, leafOf } from './keys.js';
 
 /**
@@ -21,15 +21,44 @@ export function catalogPath(config: Config, locale: string, namespace?: string):
   return path.posix.join(config.messagesDir, `${locale}.json`);
 }
 
+export function catalogFileForKey(config: Config, locale: string, key: string): string {
+  if (config.layout !== 'namespaced') return catalogPath(config, locale);
+  return catalogPath(config, locale, namespaceOf(key));
+}
+
+function catalogueFiles(cwd: string, config: Config, locale: string): string[] {
+  if (config.layout !== 'namespaced') return [catalogPath(config, locale)];
+  const dir = path.join(cwd, config.messagesDir, locale);
+  if (!exists(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+    .map((entry) => path.posix.join(config.messagesDir, locale, entry.name))
+    .sort();
+}
+
+export function sourceCatalogueFiles(cwd: string, config: Config): string[] {
+  return catalogueFiles(cwd, config, config.sourceLocale);
+}
+
+export function catalogueScopeIdentity(config: Config, files: string[]): string {
+  return JSON.stringify({
+    messagesDir: posix(config.messagesDir).replace(/^\.\/|\/+$/g, ''),
+    sourceLocale: config.sourceLocale,
+    layout: config.layout,
+    files: [...files].sort(),
+  });
+}
+
+export function catalogueScopeDigest(cwd: string, config: Config): string {
+  return sha256(catalogueScopeIdentity(config, sourceCatalogueFiles(cwd, config)));
+}
+
 export function readCatalog(cwd: string, config: Config, locale: string): Flat {
   const flat: Flat = {};
   if (config.layout === 'namespaced') {
-    const dir = path.join(cwd, config.messagesDir, locale);
-    if (!exists(dir)) return flat;
-    for (const file of fs.readdirSync(dir)) {
-      if (!file.endsWith('.json')) continue;
-      const ns = file.replace(/\.json$/, '');
-      const data = readJson<Record<string, unknown>>(path.join(dir, file), {});
+    for (const file of catalogueFiles(cwd, config, locale)) {
+      const ns = path.posix.basename(file, '.json');
+      const data = readJson<Record<string, unknown>>(path.join(cwd, file), {});
       for (const [k, v] of Object.entries(flatten(data))) flat[`${ns}.${k}`] = v;
     }
     return flat;

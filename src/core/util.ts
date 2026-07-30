@@ -6,6 +6,11 @@ export function sha(text: string): string {
   return crypto.createHash('sha1').update(text, 'utf8').digest('hex').slice(0, 16);
 }
 
+/** Full SHA-256 used by cross-tool contracts and untrusted external state. */
+export function sha256(text: string): string {
+  return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
 export function posix(p: string): string {
   return p.split(path.sep).join('/');
 }

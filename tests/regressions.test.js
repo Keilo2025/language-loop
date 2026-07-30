@@ -10,7 +10,7 @@ import { assignKeys } from '../dist/core/keys.js';
 import { planExtraction, applyExtraction } from '../dist/core/extract.js';
 import { defaultConfig, saveConfig } from '../dist/core/config.js';
 import { loadMemory, saveMemory, deadKeys, pruneMemory } from '../dist/core/memory.js';
-import { nest, readCatalog } from '../dist/core/catalog.js';
+import { catalogueScopeDigest, nest, readCatalog, writeCatalog } from '../dist/core/catalog.js';
 import { readJsonPrecious, writeJson } from '../dist/core/util.js';
 import { commandForStage } from '../dist/core/report.js';
 import {
@@ -19,7 +19,7 @@ import {
   createBatch,
   writeBatch,
 } from '../dist/core/batch.js';
-import { sha } from '../dist/core/util.js';
+import { sha, sha256 } from '../dist/core/util.js';
 
 /**
  * Regressions for the bugs found in the first scan. Each test is named for the
@@ -49,6 +49,152 @@ function project(files) {
   }
   return dir;
 }
+
+function projectWithMarketingHandoff({ compatible = true } = {}) {
+  const dir = project({
+    'app/page.tsx': [
+      "import { useTranslations } from 'next-intl';",
+      'export default function Page() {',
+      "  const t = useTranslations('hero');",
+      "  return <h1>{t('getStarted')}</h1>;",
+      '}',
+    ].join('\n'),
+  });
+  const cfg = config();
+  saveConfig(dir, cfg);
+  const memory = emptyMemory();
+  memory.entries['hero.getStarted'] = {
+    source: 'Get started',
+    sourceHash: sha('Get started'),
+    namespace: 'hero',
+    kind: 'cta',
+    file: 'app/page.tsx',
+    placeholders: [],
+    firstSeen: '',
+    lastSeen: '',
+    translations: {
+      de: { value: 'Loslegen', sourceHash: sha('Get started'), status: 'approved', updatedAt: '', by: 'agent' },
+    },
+  };
+  saveMemory(dir, memory);
+  writeCatalog(dir, cfg, 'en', { 'hero.getStarted': 'Get started' });
+  writeCatalog(dir, cfg, 'de', { 'hero.getStarted': 'Loslegen' });
+  fs.mkdirSync(path.join(dir, '.marketing-loop'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.marketing-loop/handoff.json'), JSON.stringify({
+    schemaVersion: 1,
+    marketingRunId: 'marketing-run',
+    scopeDigest: catalogueScopeDigest(dir, cfg),
+    messagesDir: 'messages',
+    sourceLocale: 'en',
+    layout: 'single-file',
+    unresolved: [{
+      key: 'hero.getStarted',
+      file: 'messages/en.json',
+      sourceHash: compatible ? sha256('Get started') : 'stale-source-hash',
+      status: 'pending',
+    }],
+  }, null, 2));
+  return { dir, cfg };
+}
+
+function projectWithInactiveMarketing({ installed }) {
+  const dir = project({
+    'app/page.tsx': [
+      'export default function Page() {',
+      '  return <h1>Launch your workspace</h1>;',
+      '}',
+    ].join('\n'),
+  });
+  saveConfig(dir, config());
+  if (installed) fs.writeFileSync(path.join(dir, 'marketing-loop.config.json'), '{}\n');
+  return dir;
+}
+
+test('sync-marketing presents a missing installation as unavailable', () => {
+  const dir = projectWithInactiveMarketing({ installed: false });
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'sync-marketing', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /installation: not installed/);
+  assert.match(run.stdout, /run: absent/);
+  assert.match(run.stdout, /handoff schema: not available/);
+  assert.match(run.stdout, /scope: not available/);
+  assert.match(run.stdout, /next: npx marketing-loop install/);
+});
+
+test('sync-marketing presents an installed never-run handoff as unavailable', () => {
+  const dir = projectWithInactiveMarketing({ installed: true });
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'sync-marketing', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /installation: installed/);
+  assert.match(run.stdout, /run: absent/);
+  assert.match(run.stdout, /handoff schema: not available/);
+  assert.match(run.stdout, /scope: not available/);
+  assert.match(run.stdout, /next: npx marketing-loop propose/);
+});
+
+test('status waits on marketing before suggesting translation', () => {
+  const { dir } = projectWithMarketingHandoff();
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'status', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /waiting on marketing/);
+  assert.match(run.stdout, /npx marketing-loop review --ui/);
+  assert.doesNotMatch(run.stdout, /npx language-loop translate/);
+});
+
+test('audit recommends marketing apply before translation for unresolved handoff keys', () => {
+  const { dir } = projectWithMarketingHandoff();
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'audit', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /waiting on marketing review/);
+  assert.match(run.stdout, /npx marketing-loop review --ui && npx marketing-loop apply/);
+  assert.doesNotMatch(run.stdout, /npx language-loop translate/);
+});
+
+test('sync-marketing reports compatible handoff diagnostics using exact keys', () => {
+  const { dir } = projectWithMarketingHandoff();
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'sync-marketing', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /handoff schema: compatible/);
+  assert.match(run.stdout, /scope: agreed/);
+  assert.match(run.stdout, /unresolved keys: 1/);
+  assert.match(run.stdout, /hero\.getStarted/);
+  assert.match(run.stdout, /stale key\/hash\/file mismatches: none/);
+  assert.match(run.stdout, /next: npx marketing-loop review --ui/);
+});
+
+test('sync-marketing reports incompatible handoff diagnostics and proposes regeneration', () => {
+  const { dir } = projectWithMarketingHandoff({ compatible: false });
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'sync-marketing', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /handoff schema: incompatible/);
+  assert.match(run.stdout, /scope: unable to validate/);
+  assert.match(run.stdout, /stale key\/hash\/file mismatches: .*source hash/);
+  assert.match(run.stdout, /next: npx marketing-loop propose/);
+});
 
 function extract(dir, cfg = config()) {
   const scan = scanRepo(dir, cfg);
@@ -475,9 +621,14 @@ test('installing the Cursor command records Cursor for future stage handoffs', (
   const installedRule = fs.readFileSync(path.join(dir, '.cursor/rules/language-loop.mdc'), 'utf8');
   assert.match(installedCommand, /language-loop apply/);
   assert.match(installedCommand, /Approve correct translations on the user's behalf/i);
-  assert.doesNotMatch(installedCommand, /review --ui|i18n-review|waits? for (the )?user/i);
+  assert.doesNotMatch(installedCommand, /i18n-review|waits? for (the )?user/i);
   assert.match(installedRule, /AI judge is the decision-maker/i);
   assert.doesNotMatch(installedRule, /language-loop review|i18n-review|waits? for (the )?user/i);
+  assert.match(
+    installedRule,
+    /language-loop extract[\s\S]*marketing-loop propose[\s\S]*language-loop translate/
+  );
+  assert.doesNotMatch(installedRule, /marketing-loop fixes the source copy first, from the code/i);
   assert.ok(
     !fs.existsSync(path.join(dir, '.cursor/commands/i18n-review.md')),
     'updating the plugin must remove the legacy human-approval command'
@@ -533,6 +684,16 @@ test('packaged localization agent applies the same completion gate as the loop c
     instructions,
     /finish every other pending locale before reporting (?:a|the) blocker/i,
   );
+});
+
+test('help says exact catalogue keys wait for marketing', () => {
+  const help = spawnSync(process.execPath, ['dist/cli.js', 'help'], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /exact catalogue keys.*waiting for marketing/i);
 });
 
 test('non-interactive init can select all common audience locales', () => {
@@ -1047,4 +1208,58 @@ test('new extraction keys cannot collide with catalogue keys missing from memory
   assert.equal(target['common.newHardcodedCopy'], 'Bestehende Nachricht');
   assert.ok(Object.values(source).includes('New hardcoded copy'));
   assert.equal(Object.keys(source).length, 2);
+});
+
+test('staged translation freezes only the canonical marketing handoff key', () => {
+  const dir = project({});
+  const cfg = config();
+  saveConfig(dir, cfg);
+  fs.mkdirSync(path.join(dir, 'messages'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'messages/en.json'), JSON.stringify({
+    first: { submit: 'Submit' },
+    second: { submit: 'Submit' },
+  }));
+
+  const memory = emptyMemory();
+  for (const key of ['first.submit', 'second.submit']) {
+    memory.entries[key] = {
+      source: 'Submit',
+      sourceHash: sha('Submit'),
+      namespace: key.split('.')[0],
+      kind: 'cta',
+      file: 'src/App.tsx',
+      placeholders: [],
+      firstSeen: '',
+      lastSeen: '',
+      translations: {},
+    };
+  }
+  saveMemory(dir, memory);
+  fs.mkdirSync(path.join(dir, '.marketing-loop'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.marketing-loop/handoff.json'), JSON.stringify({
+    schemaVersion: 1,
+    marketingRunId: 'run',
+    scopeDigest: '976e87b8cff00e0a92f84f08d333b0d87fa4cf98764aef8b79c392edd02ec5a5',
+    messagesDir: 'messages',
+    sourceLocale: 'en',
+    layout: 'single-file',
+    unresolved: [{
+      key: 'first.submit',
+      file: 'messages/en.json',
+      sourceHash: '155f816c0407310c0dab222493370773e045ee7fe04e6c9a951b07f495531264',
+      status: 'pending',
+    }],
+  }));
+
+  const translated = spawnSync(process.execPath, ['dist/cli.js', 'translate', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(translated.status, 0, translated.stderr);
+  const batch = JSON.parse(fs.readFileSync(path.join(dir, '.language-loop/batch.json'), 'utf8'));
+  assert.deepEqual(batch.units.map((unit) => unit.key), ['second.submit']);
+  const brief = fs.readFileSync(path.join(dir, '.language-loop/brief.md'), 'utf8');
+  assert.match(brief, /`first\.submit` — “Submit”/);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

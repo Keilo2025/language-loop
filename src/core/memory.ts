@@ -147,11 +147,17 @@ export function pruneMemory(memory: Memory, keys: string[]): string[] {
  * file. So a changed value there is the real staleness signal, and without
  * this the loop would happily leave nine languages saying last month's thing.
  */
-export function adoptSourceEdits(cwd: string, memory: Memory, config: Config): string[] {
+export function adoptSourceEdits(
+  cwd: string,
+  memory: Memory,
+  config: Config,
+  keys?: ReadonlySet<string>,
+): string[] {
   const catalog: Flat = readCatalog(cwd, config, config.sourceLocale);
   const changed: string[] = [];
 
   for (const [key, value] of Object.entries(catalog)) {
+    if (keys && !keys.has(key)) continue;
     const entry = memory.entries[key];
     if (!entry || !value.trim() || value === entry.source) continue;
     entry.source = value;
@@ -170,12 +176,18 @@ export function adoptSourceEdits(cwd: string, memory: Memory, config: Config): s
  * If someone fixed a clumsy German button by editing messages/de.json, that
  * edit outranks anything the loop would produce. Marking it `manual` locks it.
  */
-export function adoptCatalogEdits(cwd: string, memory: Memory, config: Config): number {
+export function adoptCatalogEdits(
+  cwd: string,
+  memory: Memory,
+  config: Config,
+  keys?: ReadonlySet<string>,
+): number {
   let adopted = 0;
   for (const locale of config.locales) {
     if (locale === config.sourceLocale) continue;
     const catalog: Flat = readCatalog(cwd, config, locale);
     for (const [key, value] of Object.entries(catalog)) {
+      if (keys && !keys.has(key)) continue;
       const entry = memory.entries[key];
       if (!entry || !value.trim()) continue;
       const known = entry.translations[locale];
@@ -236,6 +248,18 @@ export function pendingWork(memory: Memory, config: Config, only?: string[]): Wo
           reason: 'rework',
           previous: t.value,
           judgeNote: t.judgeNote,
+          attempt: (t.attempts ?? 0) + 1,
+        });
+      } else if (t.status === 'pending') {
+        // Pre-runner releases could leave an unjudged candidate in memory.
+        // It is not accepted work: regenerate it and put the fresh candidate
+        // through the same guardrail + judge path as every other translation.
+        work.push({
+          ...common,
+          locale,
+          reason: 'rework',
+          previous: t.value,
+          judgeNote: 'legacy unjudged translation requires a fresh candidate and judge decision',
           attempt: (t.attempts ?? 0) + 1,
         });
       }

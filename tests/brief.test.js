@@ -56,3 +56,52 @@ test('translation brief asks for natural audience-locale product language', () =
   assert.match(brief, /\/language-loop judge/);
   assert.doesNotMatch(brief, /i18n-review|review --ui|human approves/i);
 });
+
+test('translation brief names exact marketing-frozen keys', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lloop-brief-'));
+  const config = {
+    ...defaultConfig({
+      framework: 'react',
+      runtime: 'react-i18next',
+      messagesDir: 'messages',
+      layout: 'single-file',
+      srcDir: 'src',
+      runtimeInstalled: true,
+      evidence: [],
+    }),
+    sourceLocale: 'en',
+    locales: ['en', 'de'],
+  };
+  const frozen = [{
+    key: 'hero.getStarted',
+    locale: 'de',
+    source: 'Get started',
+    kind: 'cta',
+    file: 'src/Hero.tsx',
+    placeholders: [],
+    reason: 'new',
+  }];
+  const work = [{
+    key: 'hero.ready',
+    locale: 'de',
+    source: 'Ready',
+    kind: 'cta',
+    file: 'src/Hero.tsx',
+    placeholders: [],
+    reason: 'new',
+  }];
+  const result = writeBrief(dir, {
+    config,
+    memory: { version: 1, sourceLocale: 'en', updatedAt: '', entries: {} },
+    work,
+    batch: createBatch(work, { id: 'brief-with-frozen', sourceLocale: 'en' }),
+    marketing: { installed: true, hasRun: true, pendingTexts: [] },
+    openItems: [],
+    frozen,
+  });
+  const brief = fs.readFileSync(path.join(dir, result.file), 'utf8');
+
+  assert.match(brief, /^- `hero\.getStarted` — “Get started”$/m);
+  assert.match(brief, /marketing-loop has an unresolved rewrite/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

@@ -22,6 +22,54 @@ export type StringKind =
   | 'toast'
   | 'unknown';
 
+/** Stable user-facing selectors used by the unified Content Loop facade. */
+export type MessageCategory =
+  | 'cta'
+  | 'button'
+  | 'headline'
+  | 'navigation'
+  | 'label'
+  | 'body'
+  | 'placeholder'
+  | 'accessibility'
+  | 'error'
+  | 'empty-state'
+  | 'meta'
+  | 'toast'
+  | 'unknown';
+
+/**
+ * Omitted means every key. A provided filter is the union of its selectors;
+ * an explicitly empty filter intentionally selects no keys.
+ */
+export interface MessageFilter {
+  categories?: MessageCategory[];
+  /** Exact stored namespaces, such as "checkout" or "navigation". */
+  groups?: string[];
+  /** Exact canonical catalogue keys. */
+  keys?: string[];
+}
+
+export interface ResolvedMessageFilter {
+  requested: Required<MessageFilter>;
+  /** Canonical Language Loop kinds selected through category aliases. */
+  kinds: StringKind[];
+  /** Deterministic exact execution scope. */
+  selectedKeys: string[];
+  unmatchedGroups: string[];
+  unmatchedKeys: string[];
+}
+
+export interface LanguageProgress {
+  locale: string;
+  total: number;
+  accepted: number;
+  pending: number;
+  marketingBlocked: number;
+  needsHuman: number;
+  status: 'pending' | 'waiting-marketing' | 'needs-human' | 'complete';
+}
+
 export type Runtime =
   | 'next-intl'
   | 'next-i18next'
@@ -95,7 +143,7 @@ export interface Config {
   agents: string[];
   marketingLoop: {
     enabled: boolean;
-    /** Do not translate a string that marketing-loop has an open proposal for. */
+    /** Do not translate a key that marketing-loop has an unresolved rewrite for. */
     respectPendingCopy: boolean;
   };
   maxBatch: number;
@@ -118,6 +166,48 @@ export interface Config {
       reasoningEffort: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
     };
   };
+}
+
+export interface MarketingLoopInstallation {
+  installed: boolean;
+  hasRun: boolean;
+  voice?: { tone?: string; person?: string; banned?: string[] };
+  audience?: string;
+  allowedClaims?: string[];
+}
+
+export interface MarketingHandoffEntry {
+  key: string;
+  file: string;
+  sourceHash: string;
+  status: 'pending' | 'approved';
+}
+
+/** Optional unified-app execution scope carried by the schema-v1 handoff. */
+export interface ContentLoopSelection {
+  filter: MessageFilter;
+  resolvedKeys: string[];
+  targetLocales: string[];
+}
+
+export interface MarketingHandoff {
+  schemaVersion: 1;
+  marketingRunId: string;
+  scopeDigest: string;
+  messagesDir: string;
+  sourceLocale: string;
+  layout: CatalogLayout;
+  unresolved: MarketingHandoffEntry[];
+  selection?: ContentLoopSelection;
+}
+
+export interface MarketingHandoffState {
+  installed: boolean;
+  hasRun: boolean;
+  compatible: boolean;
+  unresolvedKeys: Set<string>;
+  selection?: ContentLoopSelection;
+  error?: string;
 }
 
 export interface ScannedString {

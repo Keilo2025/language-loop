@@ -7,7 +7,8 @@ import path from 'node:path';
 import { analyzeCompleteness } from '../dist/core/completeness.js';
 import { defaultConfig, saveConfig } from '../dist/core/config.js';
 import { saveMemory } from '../dist/core/memory.js';
-import { writeCatalog } from '../dist/core/catalog.js';
+import { catalogueScopeDigest, writeCatalog } from '../dist/core/catalog.js';
+import { sha256 } from '../dist/core/util.js';
 
 function fixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lloop-complete-'));
@@ -142,4 +143,56 @@ test('source catalogue edits are reported as stale without adopting them', () =>
   assert.ok(stale);
   assert.ok(stale.keys.includes('hero.title'));
   assert.deepEqual(snapshot(dir), before);
+});
+
+test('completeness reports exact marketing-pending keys', () => {
+  const { dir, config } = fixture();
+  fs.mkdirSync(path.join(dir, '.marketing-loop'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.marketing-loop/handoff.json'), JSON.stringify({
+    schemaVersion: 1,
+    marketingRunId: 'marketing-run',
+    scopeDigest: catalogueScopeDigest(dir, config),
+    messagesDir: 'messages',
+    sourceLocale: 'en-US',
+    layout: 'single-file',
+    unresolved: [{
+      key: 'hero.greeting',
+      file: 'messages/en-US.json',
+      sourceHash: sha256('Hello {name}'),
+      status: 'pending',
+    }],
+  }));
+
+  const report = analyzeCompleteness(dir, config);
+  const finding = report.findings.find((item) => item.kind === 'marketing-pending');
+
+  assert.ok(finding, JSON.stringify(report.findings));
+  assert.deepEqual(finding.keys, ['hero.greeting']);
+  assert.equal(finding.severity, 'warn');
+});
+
+test('incompatible marketing handoff blocks translation', () => {
+  const { dir, config } = fixture();
+  fs.mkdirSync(path.join(dir, '.marketing-loop'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.marketing-loop/handoff.json'), JSON.stringify({
+    schemaVersion: 1,
+    marketingRunId: 'marketing-run',
+    scopeDigest: catalogueScopeDigest(dir, config),
+    messagesDir: 'messages',
+    sourceLocale: 'en-US',
+    layout: 'single-file',
+    unresolved: [{
+      key: 'hero.greeting',
+      file: 'messages/en-US.json',
+      sourceHash: 'stale-source-hash',
+      status: 'pending',
+    }],
+  }));
+
+  const report = analyzeCompleteness(dir, config);
+  const finding = report.findings.find((item) => item.kind === 'marketing-incompatible');
+
+  assert.ok(finding);
+  assert.equal(finding.severity, 'block');
+  assert.match(finding.message, /source hash/i);
 });

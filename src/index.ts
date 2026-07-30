@@ -11,7 +11,9 @@ export type {
   TranslationUnit, GuardrailIssue, WorkItem, StringKind, Runtime, Framework, CatalogLayout,
   TranslationBatch, BatchUnit, TranslationArtifact, TranslationCandidate,
   VerdictArtifact, BoundVerdict, Verdict,
-  ComponentContext,
+  ComponentContext, MarketingLoopInstallation, MarketingHandoffEntry,
+  MarketingHandoff, MarketingHandoffState, ContentLoopSelection,
+  MessageCategory, MessageFilter, ResolvedMessageFilter, LanguageProgress,
 } from './types.js';
 
 export { detect, callExpression, hookFor } from './core/detect.js';
@@ -23,11 +25,18 @@ export {
   loadMemory, saveMemory, syncMemory, pendingWork, stats, sourceCatalog, localeCatalog,
   recordTranslation, adoptCatalogEdits, adoptSourceEdits,
 } from './core/memory.js';
-export { readCatalog, writeCatalog, flatten, nest, missingKeys, orphanKeys } from './core/catalog.js';
+export {
+  readCatalog, writeCatalog, flatten, nest, missingKeys, orphanKeys,
+  catalogFileForKey, sourceCatalogueFiles, catalogueScopeIdentity, catalogueScopeDigest,
+} from './core/catalog.js';
 export { writeBrief } from './core/brief.js';
 export { checkTranslations, partition } from './core/guardrails.js';
 export { applyDecisions } from './core/apply.js';
-export { detectMarketingLoop, marketingLoopPitch, frozenTexts } from './core/marketing.js';
+export {
+  detectMarketingLoop, inspectMarketingHandoff, requireMarketingKeys,
+  marketingLoopPitch, frozenTexts,
+} from './core/marketing.js';
+export type { MarketingLoopState } from './core/marketing.js';
 export { installAgents, uninstallAgents, detectAgents, AGENTS } from './core/install.js';
 export { wireRuntime } from './core/wire.js';
 export { revertLast, Backup } from './core/backup.js';
@@ -53,7 +62,31 @@ export {
 export { runTranslationLoop } from './core/runner.js';
 export type {
   RunnerTranslator, RunnerJudge, RunTranslationLoopInput, RunTranslationLoopSummary,
+  RunTranslationLoopStatus, TranslationLoopProgressEvent,
 } from './core/runner.js';
+export {
+  resolveMessageFilter, resolveTargetLocales, languageProgress,
+  LanguageLoopSelectionError,
+} from './core/selection.js';
+export {
+  CONTENT_LOOP_API_VERSION,
+  ContentLoopOrchestrationError,
+  inspectLanguageLoop,
+  extractLanguageLoop,
+  runLanguageLoop,
+} from './orchestration.js';
+export type {
+  ContentLoopErrorCode,
+  LanguageLoopPhase,
+  LanguageLoopNextStage,
+  LanguageLoopScopeInput,
+  LanguageLoopSnapshot,
+  InspectLanguageLoopInput,
+  ExtractLanguageLoopInput,
+  ExtractLanguageLoopResult,
+  RunLanguageLoopInput,
+  RunLanguageLoopResult,
+} from './orchestration.js';
 export { extractComponentContext, contextMap } from './core/context.js';
 export type { ContextOptions } from './core/context.js';
 export { ProviderRegistry, requestJson } from './core/providers.js';

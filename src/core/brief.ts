@@ -1,9 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Config, Memory, TranslationBatch, WorkItem } from '../types.js';
+import type {
+  Config,
+  MarketingLoopInstallation,
+  Memory,
+  TranslationBatch,
+  WorkItem,
+} from '../types.js';
 import { statePath } from './config.js';
 import { DIALECT_RULE, localeInfo } from './locales.js';
-import type { MarketingLoopState } from './marketing.js';
 import { commandForStage } from './report.js';
 import { truncate } from './util.js';
 
@@ -24,9 +29,9 @@ export interface BriefInput {
   memory: Memory;
   work: WorkItem[];
   batch: TranslationBatch;
-  marketing: MarketingLoopState;
+  marketing: MarketingLoopInstallation;
   openItems: { file: string; line: number; text: string; reason: string }[];
-  frozen: string[];
+  frozen: WorkItem[];
 }
 
 export function writeBrief(cwd: string, input: BriefInput): { file: string; units: number } {
@@ -111,10 +116,12 @@ export function writeBrief(cwd: string, input: BriefInput): { file: string; unit
   lines.push('');
 
   if (frozen.length) {
-    lines.push('## Frozen strings');
+    lines.push('## Frozen keys');
     lines.push('');
-    lines.push(`${frozen.length} string(s) are excluded from this batch because marketing-loop has an open`);
-    lines.push('rewrite for them. Translating copy that is about to change wastes the work twice over.');
+    lines.push(`${frozen.length} translation key(s) are excluded because marketing-loop has an unresolved rewrite.`);
+    for (const item of frozen) lines.push(`- \`${item.key}\` — “${item.source}”`);
+    lines.push('');
+    lines.push('Translating copy that is about to change wastes the work twice over.');
     lines.push(`Approve or reject those rewrites first, then re-run \`${commandForStage(config, 'translate')}\`.`);
     lines.push('');
   }

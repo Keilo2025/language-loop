@@ -99,6 +99,7 @@ export function commandForStage(config: Pick<Config, 'agents'>, stage: string): 
 
 export function commandForAction(config: Config, action: SuggestedAction): string {
   if (action === 'manual-extract') return 'Open the named files and move those strings into a shared translation helper or message map.';
+  if (action === 'marketing-review') return 'npx marketing-loop review --ui && npx marketing-loop apply';
   const stage: Record<Exclude<SuggestedAction, 'manual-extract'>, string> = {
     extract: 'extract',
     setup: 'init',
@@ -106,6 +107,7 @@ export function commandForAction(config: Config, action: SuggestedAction): strin
     retranslate: 'translate',
     apply: 'apply',
     prune: 'extract --prune',
+    'marketing-review': 'sync-marketing',
   };
   return commandForStage(config, stage[action]);
 }
@@ -137,7 +139,10 @@ export function renderCompletenessReport(report: CompletenessReport, config: Con
   renderLocaleCompletion(report);
 
   heading('next steps');
-  report.actions.forEach((action, index) => {
+  const incompatibleMarketing = report.findings.some((finding) => finding.kind === 'marketing-incompatible');
+  const actions = incompatibleMarketing ? [] : report.actions;
+  if (incompatibleMarketing) console.log('  1. npx marketing-loop propose');
+  actions.forEach((action, index) => {
     console.log(`  ${index + 1}. ${commandForAction(config, action)}`);
   });
   console.log('');

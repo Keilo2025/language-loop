@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "marketingRunId": "contract-run",
+  "scopeDigest": "976e87b8cff00e0a92f84f08d333b0d87fa4cf98764aef8b79c392edd02ec5a5",
+  "messagesDir": "messages",
+  "sourceLocale": "en",
+  "layout": "single-file",
+  "unresolved": [
+    {
+      "key": "hero.startFree",
+      "file": "messages/en.json",
+      "sourceHash": "22a1d78d60d5d6c4ed6c7e030a9bc8886239ca690c9327dc923a3496476b801f",
+      "status": "pending"
+    }
+  ]
+}

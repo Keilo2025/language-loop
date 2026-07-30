@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import { scanRepo } from '../dist/core/scan.js';
 import { assignKeys } from '../dist/core/keys.js';
 import { planExtraction, applyExtraction } from '../dist/core/extract.js';
-import { defaultConfig } from '../dist/core/config.js';
+import { defaultConfig, saveConfig } from '../dist/core/config.js';
 import { detect } from '../dist/core/detect.js';
-import { detectMarketingLoop, frozenTexts } from '../dist/core/marketing.js';
 
 function sandbox() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'language-loop-'));
@@ -96,18 +96,27 @@ test('a dry run writes nothing', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('marketing-loop pending copy freezes the matching strings', () => {
+test('legacy marketing proposal text never prevents hardcoded text extraction', () => {
   const dir = sandbox();
   fs.mkdirSync(path.join(dir, '.marketing-loop'), { recursive: true });
   fs.writeFileSync(
     path.join(dir, '.marketing-loop/proposals.json'),
-    JSON.stringify([{ before: 'Get started free', status: 'pending' }])
+    JSON.stringify({
+      schemaVersion: 4,
+      proposals: [{ before: 'Get started free', status: 'pending' }],
+    })
   );
   const { config } = setup(dir);
-  const state = detectMarketingLoop(dir);
-  assert.equal(state.installed, true);
+  saveConfig(dir, config);
 
-  const frozen = frozenTexts(state, { ...config, marketingLoop: { enabled: true, respectPendingCopy: true } });
-  assert.ok(frozen.has('Get started free'));
+  const run = spawnSync(process.execPath, ['dist/cli.js', 'extract', '--cwd', dir], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  const page = fs.readFileSync(path.join(dir, 'app/page.tsx'), 'utf8');
+  assert.doesNotMatch(page, />Get started free</);
+  assert.match(page, /t\('getStartedFree'\)/);
   fs.rmSync(dir, { recursive: true, force: true });
 });

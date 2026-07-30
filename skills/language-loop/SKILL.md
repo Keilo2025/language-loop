@@ -30,11 +30,32 @@ translates the delta rather than the app.
 ```
 npx language-loop scan       # what is still hardcoded
 npx language-loop extract    # move it into keys, wire the hook
+npx marketing-loop propose   # optional: settle source-catalogue copy
+npx marketing-loop review --ui
+npx marketing-loop apply
 npx language-loop translate  # writes .language-loop/brief.md — then stops
 npx language-loop judge      # writes .language-loop/judge.md — grade your own work
 npx language-loop apply      # write what passed; send the rest back round
 npx language-loop audit      # read-only completeness report and ordered fixes
 ```
+
+The marketing pass is optional. When it is present, `marketing-loop` 0.5+ is the primary
+Content Loop application and directly calls `language-loop/orchestration`; do not duplicate or
+merge the localization engine into Marketing Loop. `language-loop` owns extracting text from
+code and all target catalogues. `marketing-loop` edits only the source catalogue after
+extraction. An unresolved marketing proposal pauses its exact catalogue key, not matching
+strings under other keys; when marketing-loop is absent, continue with language-loop as a
+standalone loop. The key-based handshake requires language-loop 0.4+ and refuses legacy
+pending marketing state.
+
+When the user selects a message filter, preserve it exactly from extraction through
+translation and apply. Categories such as CTA/button, headline, navigation and label can be
+combined with exact namespace/content groups and exact canonical keys. Never replace a
+filtered request with an all-message run, and never process a key that is absent from the
+resolved selection. Use `npx language-loop orchestrate status|extract|translate` for the
+schema-1 CLI mirror; `orchestrate translate` requires `--llm`, while embedded Content Loop
+passes its translator and judge directly to the module. An optional Marketing handoff
+`selection` is authoritative and must agree with any caller-supplied filter.
 
 `apply` reports how many translations the judge sent back. **If that number is not zero, go
 round again from `translate`** — the brief will contain those strings with the reason each
@@ -44,10 +65,10 @@ never the fallback approver.
 
 The stage named in the user's invocation is the starting point, not a stopping point.
 After every `apply`, treat a displayed `next` command as your next internal action and
-execute it immediately while work remains. When `translate` reports nothing left, run
-`status` and `audit`. A successful final response is allowed only after `audit` reports
-complete; if it reports a genuine blocker, finish every other pending locale before
-reporting that blocker.
+execute it immediately while selected work remains. When `translate` reports nothing left,
+run `status` and `audit`. A successful final response is allowed only after every selected
+key in every selected locale is judge-approved or manual and `audit` reports complete; if it
+reports a genuine blocker, finish every other selected locale before reporting that blocker.
 
 If there is no `language-loop.config.json`, run `npx language-loop init` first. It asks
 which agent the user codes in and which languages they want, and it needs a real terminal.
@@ -121,9 +142,9 @@ review canvas or ask the user to approve translations.
   you edit one anyway the loop will notice, mark it `manual` and lock it against every future
   run — which is right for a human's edit and wrong for yours.
 - **Do not invent keys.** Keys come from `extract`.
-- **Do not work around the marketing-loop freeze.** If a string is excluded because a copy
-  rewrite is pending, translating it wastes the work twice: once now, once when the English
-  changes underneath it.
+- **Do not work around an unresolved marketing key.** If an exact catalogue key is excluded
+  because its source-copy rewrite is pending, translating it wastes the work twice. Do not
+  pause matching strings under other keys.
 - **Do not hand-translate what `extract` refused.** Read the reason first. "Declared outside
   any component" means the fix is to move the array inside the component, not to translate
   the string where it sits.
