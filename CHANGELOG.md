@@ -4,6 +4,13 @@ All notable changes to Language Loop are documented here.
 
 ## Unreleased
 
+## 0.4.4 - 2026-08-02
+
+### Changed
+
+- Republished the current package as a new patch release with no functional
+  changes.
+
 ## 0.4.3 - 2026-08-02
 
 ### Fixed
