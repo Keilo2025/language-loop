@@ -4,6 +4,8 @@ All notable changes to Language Loop are documented here.
 
 ## Unreleased
 
+## 0.4.2 - 2026-08-02
+
 ### Added
 
 - `run --llm` now preflights the configured translator and judge before the
