@@ -4,6 +4,14 @@ All notable changes to Language Loop are documented here.
 
 ## Unreleased
 
+## 0.4.3 - 2026-08-02
+
+### Fixed
+
+- Kept documentation, skills, requirement files, handoffs, agent instructions,
+  Markdown, and TOML outside the scan-and-extract boundary, even when a custom
+  configuration tries to include them.
+
 ## 0.4.2 - 2026-08-02
 
 ### Added
