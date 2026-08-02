@@ -14,6 +14,14 @@ export class OpenAiJudgeProvider implements JudgeProvider {
 
   constructor(private options: OpenAiJudgeOptions = {}) {}
 
+  checkRequirements(): string[] {
+    if (this.options.apiKey ?? process.env.OPENAI_API_KEY) return [];
+    return [
+      'openai-gpt-5.6-terra: no OPENAI_API_KEY. Create a key at ' +
+      'https://platform.openai.com/api-keys and add OPENAI_API_KEY=sk-... to the project .env.',
+    ];
+  }
+
   async judge(request: JudgeProviderRequest): Promise<Verdict[]> {
     const apiKey = this.options.apiKey ?? process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error('GPT-5.6 judging needs OPENAI_API_KEY.');

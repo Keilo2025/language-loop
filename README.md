@@ -573,6 +573,18 @@ Variables already set in the real environment always win over `.env`, so CI secr
 overridden by a file. Exporting the variables yourself (or `node --env-file`) keeps working
 exactly as before; a missing `.env` is not an error.
 
+`run --llm` preflights both providers before the loop starts. If a requirement is unmet it
+prints one line per problem — naming the exact variable or config key that fixes it — and
+exits non-zero without translating or writing anything:
+
+```text
+LLM requirements not met
+  .env: loaded GOOGLE_CLOUD_PROJECT
+  ! google-tllm: no credentials. Add GOOGLE_CLOUD_TRANSLATION_API_KEY (Basic v2) or …
+  ! openai-gpt-5.6-terra: no OPENAI_API_KEY. Create a key at https://platform.openai.com/api-keys …
+  The loop did not start — nothing was translated or written.
+```
+
 | variable | required by | notes |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | GPT-5.6 judge | also used by `translate --llm` when Anthropic is absent |

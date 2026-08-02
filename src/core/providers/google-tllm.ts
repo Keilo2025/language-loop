@@ -1,3 +1,4 @@
+import type { Config } from '../../types.js';
 import type { TranslationProvider, TranslationProviderRequest, FetchLike } from '../providers.js';
 import { requestJson } from '../providers.js';
 
@@ -14,6 +15,27 @@ export class GoogleTllmProvider implements TranslationProvider {
   readonly id = 'google-tllm';
 
   constructor(private options: GoogleTllmOptions = {}) {}
+
+  checkRequirements(config: Config): string[] {
+    const problems: string[] = [];
+    const project = this.options.project ?? config.ai.google.project ?? process.env.GOOGLE_CLOUD_PROJECT;
+    if (!project) {
+      problems.push(
+        'google-tllm: no Google Cloud project. Set GOOGLE_CLOUD_PROJECT in the project .env ' +
+        '(language-loop loads it automatically), or "ai.google.project" in language-loop.config.json.'
+      );
+    }
+    const apiKey = this.options.apiKey ?? process.env.GOOGLE_CLOUD_TRANSLATION_API_KEY;
+    const accessToken = this.options.accessToken ?? process.env.GOOGLE_CLOUD_ACCESS_TOKEN;
+    if (!apiKey && !accessToken) {
+      problems.push(
+        'google-tllm: no credentials. Add GOOGLE_CLOUD_TRANSLATION_API_KEY (Basic v2) or ' +
+        'GOOGLE_CLOUD_ACCESS_TOKEN (Advanced v3 OAuth) to the project .env — ' +
+        'Google Cloud Console → APIs & Services → Credentials creates both.'
+      );
+    }
+    return problems;
+  }
 
   async translate(
     request: TranslationProviderRequest

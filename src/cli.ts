@@ -869,6 +869,23 @@ async function cmdRun(): Promise<void> {
   const translator = registry.translator(config.ai.translator);
   const judge = registry.judge(config.ai.judge);
   const dryRun = flags.has('--dry-run');
+
+  // Preflight: a missing key should stop the loop before the first batch,
+  // not halfway through it.
+  const problems = [
+    ...(translator.checkRequirements?.(config) ?? []),
+    ...(judge.checkRequirements?.(config) ?? []),
+  ];
+  if (problems.length) {
+    heading('LLM requirements not met');
+    reportDotEnv();
+    for (const problem of problems) {
+      console.log(`  ${c.red('!')} ${problem}`);
+    }
+    console.log(c.dim('  The loop did not start — nothing was translated or written.'));
+    process.exitCode = 2;
+    return;
+  }
   const summary = await runLanguageLoop({
     cwd,
     dryRun,

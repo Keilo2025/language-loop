@@ -6,6 +6,10 @@ All notable changes to Language Loop are documented here.
 
 ### Added
 
+- `run --llm` now preflights the configured translator and judge before the
+  loop starts: each unmet requirement (missing project, missing credentials)
+  is reported with the exact variable or config key that fixes it, and the
+  loop exits non-zero without translating or writing anything.
 - The CLI now loads the project's own `.env` at startup, so `run --llm` and
   `translate --llm` find `OPENAI_API_KEY`, `GOOGLE_CLOUD_TRANSLATION_API_KEY`,
   `GOOGLE_CLOUD_ACCESS_TOKEN` and `GOOGLE_CLOUD_PROJECT` without shell exports

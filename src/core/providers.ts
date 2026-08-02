@@ -23,6 +23,11 @@ export interface JudgeProviderRequest {
 
 export interface TranslationProvider {
   readonly id: string;
+  /**
+   * Preflight check run before the loop starts. Returns one human-readable
+   * problem per unmet requirement, each naming its fix; empty means ready.
+   */
+  checkRequirements?(config: Config): string[];
   translate(
     request: TranslationProviderRequest
   ): Promise<{ key: string; locale: string; value: string; note?: string }[]>;
@@ -30,6 +35,7 @@ export interface TranslationProvider {
 
 export interface JudgeProvider {
   readonly id: string;
+  checkRequirements?(config: Config): string[];
   judge(request: JudgeProviderRequest): Promise<Verdict[]>;
 }
 
