@@ -2,6 +2,16 @@
 
 All notable changes to Language Loop are documented here.
 
+## Unreleased
+
+### Added
+
+- The CLI now loads the project's own `.env` at startup, so `run --llm` and
+  `translate --llm` find `OPENAI_API_KEY`, `GOOGLE_CLOUD_TRANSLATION_API_KEY`,
+  `GOOGLE_CLOUD_ACCESS_TOKEN` and `GOOGLE_CLOUD_PROJECT` without shell exports
+  or `--env-file` plumbing. Variables already set in the real environment
+  always win; the LLM commands print which names were loaded, never values.
+
 ## 0.4.1 - 2026-07-30
 
 ### Added

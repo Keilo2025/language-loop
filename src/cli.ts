@@ -38,6 +38,7 @@ import { exists, readJson, truncate, writeJson } from './core/util.js';
 import { readCatalog, missingKeys, orphanKeys, writeCatalog } from './core/catalog.js';
 import { estimateBatch, translateWithLlm } from './core/llm.js';
 import { contextMap } from './core/context.js';
+import { loadDotEnv } from './core/env.js';
 import { ProviderRegistry } from './core/providers.js';
 import { GoogleTllmProvider } from './core/providers/google-tllm.js';
 import { OpenAiJudgeProvider } from './core/providers/openai-judge.js';
@@ -88,6 +89,18 @@ if (command === '--version' || command === '-v') {
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { version: string };
   console.log(pkg.version);
   process.exit(0);
+}
+
+// A project's own .env holds the LLM keys (OPENAI_API_KEY, GOOGLE_CLOUD_*).
+// Load it once at startup so every command sees it; variables already set in
+// the real environment always win.
+const dotenv = loadDotEnv(cwd);
+
+function reportDotEnv(): void {
+  if (!dotenv || !dotenv.keys.length) return;
+  const shown = dotenv.keys.slice(0, 5).join(', ');
+  const more = dotenv.keys.length > 5 ? `, …and ${dotenv.keys.length - 5} more` : '';
+  console.log(c.dim(`  .env: loaded ${shown}${more}`));
 }
 
 function valueOf(name: string): string | undefined {
@@ -834,6 +847,7 @@ async function runLlm(
   batch: TranslationBatch
 ): Promise<void> {
   console.log('\n' + c.dim(`--llm: ${estimateBatch(work, config)}`));
+  reportDotEnv();
   const result = await translateWithLlm(cwd, work, config);
   const artifact = bindTranslationArtifact(batch, result.translations, `llm:${result.model}`);
   writeJson(statePath(cwd, 'translations.json'), artifact);
@@ -865,6 +879,7 @@ async function cmdRun(): Promise<void> {
   });
 
   heading(dryRun ? 'end-to-end LLM dry run' : 'end-to-end LLM run');
+  reportDotEnv();
   console.log(`  provider: ${translator.id} → ${judge.id}`);
   console.log(
     `  ${summary.batches} batch(es), ${summary.translated} candidate(s), ${summary.applied} applied`
@@ -1537,6 +1552,7 @@ ${c.bold('the loop')}
   npx language-loop judge            your agent grades its own translations
   npx language-loop apply            write what passed; send the rest back round
   npx language-loop run --llm        Google TLLM → guardrails → GPT-5.6 judge → apply
+                                     (reads API keys from your project's .env automatically)
   npx language-loop orchestrate status|extract|translate
                                         stable Content Loop module/JSON CLI mirror
   npx language-loop eval             score a JSONL candidate set against the corpus

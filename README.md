@@ -548,16 +548,38 @@ npx language-loop judge
 npx language-loop apply
 ```
 
-Use the provider-backed workflow for reproducible CI or a fully unattended run:
+Use the provider-backed workflow for reproducible CI or a fully unattended run. The CLI loads
+the project's own `.env` at startup, so the keys live next to
+`language-loop.config.json` and no shell plumbing is needed:
 
 ```bash
-export GOOGLE_CLOUD_PROJECT=my-google-cloud-project
-export GOOGLE_CLOUD_TRANSLATION_API_KEY=...  # Basic v2, or use the access token below
-# export GOOGLE_CLOUD_ACCESS_TOKEN=...       # Advanced v3 OAuth
-export OPENAI_API_KEY=...
+# .env — keep it out of git (add it to .gitignore)
+GOOGLE_CLOUD_PROJECT=my-google-cloud-project
+GOOGLE_CLOUD_TRANSLATION_API_KEY=...  # Basic v2, or use the access token below
+# GOOGLE_CLOUD_ACCESS_TOKEN=...       # Advanced v3 OAuth
+OPENAI_API_KEY=...
 
 npx language-loop run --llm
 ```
+
+`run --llm` and `translate --llm` print which variable names were loaded — never values:
+
+```text
+  .env: loaded GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_TRANSLATION_API_KEY, OPENAI_API_KEY
+  provider: google-tllm → openai-gpt-5.6-terra
+```
+
+Variables already set in the real environment always win over `.env`, so CI secrets cannot be
+overridden by a file. Exporting the variables yourself (or `node --env-file`) keeps working
+exactly as before; a missing `.env` is not an error.
+
+| variable | required by | notes |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | GPT-5.6 judge | also used by `translate --llm` when Anthropic is absent |
+| `GOOGLE_CLOUD_PROJECT` | Google TLLM translator | or set `ai.google.project` in the config |
+| `GOOGLE_CLOUD_TRANSLATION_API_KEY` | Google TLLM translator | Basic v2 key |
+| `GOOGLE_CLOUD_ACCESS_TOKEN` | Google TLLM translator | Advanced v3 OAuth; alternative to the key |
+| `ANTHROPIC_API_KEY` | `translate --llm` only | preferred over OpenAI for the staged path |
 
 The runner processes one locale at a time and binds every candidate to an immutable batch ID,
 source hash, context hash, and candidate hash. It then runs placeholder/ICU/markup/terminology
