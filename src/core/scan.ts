@@ -17,13 +17,21 @@ const NEVER_SCAN = [
   /(^|\/)(?:generated|__generated__|locales)(?:\/|$)/,
   /(^|\/)[^/]+\.generated\.[^/]+$/,
   /(^|\/)(?:locale-catalog|locales)\.[^/]+$/,
+  // Skills, docs, requirement docs, handoffs and agent-instruction dirs are
+  // instructions for humans and agents — code, not interface copy. This is
+  // absolute: no include or exclude setting can opt them back in.
+  /(^|\/)(?:docs?|documentation|skills?|prd|brd|handoff)(?:\/|$)/i,
+  /(?:^|\/)\.(?:agents|claude|cursor|codex)(?:\/|$)/,
+  /(?:^|\/)[^/]+\.(?:md|markdown|mdx|toml)$/i,
 ];
 
 /**
  * The non-negotiable source boundary shared by scan and apply.
  *
  * Config narrows this boundary; it cannot opt generated/catalogue files,
- * traversal paths, or HTML prototypes in a framework app back into writes.
+ * traversal paths, HTML prototypes in a framework app, or instruction
+ * material (skills, docs, requirement docs, handoffs, agent-instruction
+ * dirs, markdown, toml) back into writes.
  */
 export function isExtractableSourceFile(file: string, config: Config): boolean {
   const rel = posix(file).replace(/^\.\//, '');

@@ -26,6 +26,14 @@ export function defaultConfig(detection: Detection): Config {
       '**/generated/**', '**/__generated__/**', '**/*.generated.*',
       '**/locales/**', '**/locales.*', '**/locale-catalog.*',
       '**/prototypes/**', '**/prototype/**',
+      // Docs, skills, requirement docs, handoffs and agent-instruction dirs
+      // instruct humans and agents; they are not interface copy. The scan
+      // boundary blocks the same paths unconditionally, so removing them
+      // here does not opt them back in.
+      '**/docs/**', '**/doc/**', '**/documentation/**',
+      '**/skills/**', '**/skill/**', '**/prd/**', '**/brd/**', '**/handoff/**',
+      '**/.agents/**', '**/.claude/**', '**/.cursor/**', '**/.codex/**',
+      '**/*.md', '**/*.mdx', '**/*.toml',
     ],
     protectedFiles: ['LICENSE', 'CHANGELOG.md', 'README.md'],
     ignoreStrings: [],

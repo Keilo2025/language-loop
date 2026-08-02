@@ -299,6 +299,142 @@ test('scan keeps generated sources, locale catalogues, and framework HTML protot
   assert.deepEqual(scan.strings.map((item) => item.text), ['Stop']);
 });
 
+test('scan ignores skills, docs, and requirement docs so only app copy is translated', () => {
+  const dir = project({
+    'src/components/StopButton.tsx': [
+      'export function StopButton() {',
+      '  return <button>Stop</button>;',
+      '}',
+    ].join('\n'),
+    'docs/examples/OnboardingCard.tsx': [
+      'export function OnboardingCard() {',
+      '  return <button>Documented example copy</button>;',
+      '}',
+    ].join('\n'),
+    'skills/prompting/Demo.tsx': [
+      'export function Demo() {',
+      '  return <button>Skill demo copy</button>;',
+      '}',
+    ].join('\n'),
+    'prd/CheckoutMock.tsx': [
+      'export function CheckoutMock() {',
+      '  return <button>Requirement mock copy</button>;',
+      '}',
+    ].join('\n'),
+    'brd/flows.tsx': [
+      'export function Flows() {',
+      '  return <button>Business requirement copy</button>;',
+      '}',
+    ].join('\n'),
+    'handoff/plan.tsx': [
+      'export function Plan() {',
+      '  return <button>Handoff plan copy</button>;',
+      '}',
+    ].join('\n'),
+    '.agents/notes.tsx': [
+      'export function Notes() {',
+      '  return <button>Agent notes copy</button>;',
+      '}',
+    ].join('\n'),
+    'docs/PRD.md': '# Product requirements\n\nThe button says "Delete database".',
+    'skills/instructions.toml': '[prompt]\ngoal = "Tell the agent exactly what to build"',
+  });
+
+  const scan = scanRepo(dir, config());
+  assert.deepEqual(scan.strings.map((item) => item.text), ['Stop']);
+  assert.equal(scan.filesScanned, 1);
+});
+
+test('scan never reads skills, docs, requirement docs, handoffs, or agent dirs, even when config opts them in', () => {
+  const dir = project({
+    'src/components/StopButton.tsx': [
+      'export function StopButton() {',
+      '  return <button>Stop</button>;',
+      '}',
+    ].join('\n'),
+    'docs/examples/OnboardingCard.tsx': [
+      'export function OnboardingCard() {',
+      '  return <button>Documented example copy</button>;',
+      '}',
+    ].join('\n'),
+    'skills/prompting/Demo.tsx': [
+      'export function Demo() {',
+      '  return <button>Skill demo copy</button>;',
+      '}',
+    ].join('\n'),
+    'PRD/CheckoutMock.tsx': [
+      'export function CheckoutMock() {',
+      '  return <button>Requirement mock copy</button>;',
+      '}',
+    ].join('\n'),
+    'handoff/plan.tsx': [
+      'export function Plan() {',
+      '  return <button>Handoff plan copy</button>;',
+      '}',
+    ].join('\n'),
+    '.agents/notes.tsx': [
+      'export function Notes() {',
+      '  return <button>Agent notes copy</button>;',
+      '}',
+    ].join('\n'),
+    'guide.mdx': '# Guide\n\nThe button says "Delete database".',
+  });
+  // A config that whitelists every tsx and mdx and drops every default
+  // exclusion still cannot pull instruction material into a scan.
+  const cfg = config({ include: ['**/*.tsx', '**/*.mdx'], exclude: [] });
+
+  const scan = scanRepo(dir, cfg);
+  assert.deepEqual(scan.strings.map((item) => item.text), ['Stop']);
+});
+
+test('apply refuses to write into docs, skills, handoffs, or agent dirs even when an edit targets them', () => {
+  const dir = project({
+    'docs/examples/OnboardingCard.tsx': 'export const card = { title: "Documented example copy" };',
+    'skills/prompting/Demo.tsx': 'export const demo = { title: "Skill demo copy" };',
+    'handoff/plan.tsx': 'export const plan = { title: "Handoff plan copy" };',
+    '.agents/notes.tsx': 'export const notes = { title: "Agent notes copy" };',
+  });
+  const cfg = config({ exclude: [] });
+  const plan = {
+    edits: [
+      {
+        file: 'docs/examples/OnboardingCard.tsx', line: 1, context: 'literal',
+        before: 'Documented example copy', after: "t('documentedExample')",
+        key: 'common.documentedExample', reason: 'test',
+      },
+      {
+        file: 'skills/prompting/Demo.tsx', line: 1, context: 'literal',
+        before: 'Skill demo copy', after: "t('skillDemo')",
+        key: 'common.skillDemo', reason: 'test',
+      },
+      {
+        file: 'handoff/plan.tsx', line: 1, context: 'literal',
+        before: 'Handoff plan copy', after: "t('handoffPlan')",
+        key: 'common.handoffPlan', reason: 'test',
+      },
+      {
+        file: '.agents/notes.tsx', line: 1, context: 'literal',
+        before: 'Agent notes copy', after: "t('agentNotes')",
+        key: 'common.agentNotes', reason: 'test',
+      },
+    ],
+    wiring: [],
+    openItems: [],
+  };
+
+  const result = applyExtraction(dir, plan, cfg);
+  assert.equal(fs.readFileSync(path.join(dir, 'docs/examples/OnboardingCard.tsx'), 'utf8'),
+    'export const card = { title: "Documented example copy" };');
+  assert.equal(fs.readFileSync(path.join(dir, 'skills/prompting/Demo.tsx'), 'utf8'),
+    'export const demo = { title: "Skill demo copy" };');
+  assert.equal(fs.readFileSync(path.join(dir, 'handoff/plan.tsx'), 'utf8'),
+    'export const plan = { title: "Handoff plan copy" };');
+  assert.equal(fs.readFileSync(path.join(dir, '.agents/notes.tsx'), 'utf8'),
+    'export const notes = { title: "Agent notes copy" };');
+  assert.equal(result.applied.length, 0);
+  assert.equal(result.skipped.length, 4);
+});
+
 test('apply refuses generated files, stylesheets, and edits without a scanned text context', () => {
   const dir = project({
     'src/generated/prisma/client.ts': 'export const warning = "Delete database";',
