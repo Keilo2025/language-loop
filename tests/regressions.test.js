@@ -882,6 +882,70 @@ test('non-interactive init explains invalid region names', () => {
   assert.match(run.stderr, /africa, americas, asia, europe, middle-east, oceania/);
 });
 
+// --- extract must not rewrite TypeScript / toast code as if it were JSX -----
+
+test('TypeScript generics and console.error(… error: …) are not treated as UI copy', () => {
+  const before = [
+    "'use client';",
+    'import { useState, useRef } from "react";',
+    'export default function Page() {',
+    '  const [loading, setLoading] = useState<boolean | null>(null);',
+    '  const heroRef = useRef<HTMLDivElement>(null);',
+    '  const handle = async () => {',
+    '    try {',
+    '      await doThing();',
+    '    } catch (error) {',
+    '      console.error("Holdings CSV preview error:", error);',
+    '      toast.dismiss();',
+    '      toast.error(t("importHoldings.previewFailed"));',
+    '    }',
+    '  };',
+    '  return (',
+    '    <div>',
+    '      <h1>Map Holding Columns</h1>',
+    '      <button>Import CSV</button>',
+    '    </div>',
+    '  );',
+    '}',
+  ].join('\n');
+
+  const dir = project({ 'app/page.tsx': before });
+  const { scan, result } = extract(dir);
+  const texts = scan.strings.map((s) => s.text);
+
+  assert.deepEqual(texts.sort(), ['Import CSV', 'Map Holding Columns']);
+  assert.equal(
+    result.skipped.filter((s) => /source code/i.test(s.reason)).length,
+    0,
+    'the bad spans should never reach apply',
+  );
+
+  const out = fs.readFileSync(path.join(dir, 'app/page.tsx'), 'utf8');
+  assert.match(out, /useState<boolean \| null>\(null\)/);
+  assert.match(out, /useRef<HTMLDivElement>\(null\)/);
+  assert.match(out, /console\.error\("Holdings CSV preview error:", error\)/);
+  assert.match(out, /toast\.dismiss\(\)/);
+  assert.match(out, /toast\.error\(t\("importHoldings\.previewFailed"\)\)/);
+  assert.match(out, /\{t\('/);
+  assert.doesNotMatch(out, /t\('(nullConst|errorToastDismiss|Usestate)/i);
+});
+
+test('object-property copy after { or , is still extracted', () => {
+  const dir = project({
+    'app/page.tsx': [
+      'export default function Page() {',
+      "  const copy = { title: 'Solo plan', description: 'For one engineer' };",
+      '  return <h1>{copy.title}</h1>;',
+      '}',
+    ].join('\n'),
+  });
+
+  const { scan } = extract(dir);
+  const texts = scan.strings.map((s) => s.text);
+  assert.ok(texts.includes('Solo plan'));
+  assert.ok(texts.includes('For one engineer'));
+});
+
 // --- bug 4: multi-line JSX text ---------------------------------------------
 
 test('a JSX text node whose words are on the next line is still extracted', () => {

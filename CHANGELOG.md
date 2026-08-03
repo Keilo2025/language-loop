@@ -4,6 +4,14 @@ All notable changes to Language Loop are documented here.
 
 ## Unreleased
 
+### Fixed
+
+- Stopped `extract` from corrupting React/TypeScript source. The JSX text scanner
+  no longer treats TypeScript generics (`useState<T>(null)`) or comparisons
+  (`count > 0`) as tag boundaries, and object-literal copy is only matched after
+  `{` or `,` so `console.error("… error:", err)` / `toast.error(…)` cannot be
+  rewritten into `{t('errorToast…')}` keys.
+
 ## 0.4.4 - 2026-08-02
 
 ### Changed

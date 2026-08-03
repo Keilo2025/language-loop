@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { scanRepo, isCopy, isJsxTextCandidate, functionDepth, findPlaceholders } from '../dist/core/scan.js';
+import { scanRepo, isCopy, isJsxTextCandidate, isJsxTagClose, functionDepth, findPlaceholders } from '../dist/core/scan.js';
 import { defaultConfig } from '../dist/core/config.js';
 import { detect } from '../dist/core/detect.js';
 
@@ -54,6 +54,21 @@ test('jsx text candidates admit values but refuse code', () => {
   assert.equal(isJsxTextCandidate('{plan.title}'), false, 'no words of its own');
   assert.equal(isJsxTextCandidate('{items.map((i) => i.id)}'), false);
   assert.equal(isJsxTextCandidate('{count > 3 ? "many" : "few"}'), false);
+  assert.equal(isJsxTextCandidate('(null);\n  const heroRef = useRef'), false);
+  assert.equal(isJsxTextCandidate(', error);\n      toast.dismiss();\n      toast.error(t('), false);
+});
+
+test('only a real JSX tag close counts as a text-node boundary', () => {
+  const jsx = 'return (\n  <h1>Ship it</h1>\n);';
+  assert.equal(isJsxTagClose(jsx, jsx.indexOf('>Ship') ), true);
+
+  const generic = 'const [v, setV] = useState<boolean | null>(null);\n  const ref = useRef<HTMLDivElement>(null);';
+  assert.equal(isJsxTagClose(generic, generic.indexOf('>(null)')), false);
+  assert.equal(isJsxTagClose(generic, generic.indexOf('>(null);')), false);
+
+  const comparison = 'if (count > 0) {\n  return <p>Ready</p>;\n}';
+  assert.equal(isJsxTagClose(comparison, comparison.indexOf('> 0')), false);
+  assert.equal(isJsxTagClose(comparison, comparison.indexOf('>Ready') ), true);
 });
 
 test('module scope is not the same as brace depth', () => {

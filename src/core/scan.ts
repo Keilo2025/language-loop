@@ -177,6 +177,10 @@ function scanJs(file: string, content: string, config: Config): ScannedString[] 
     if (!isCopy(stripLiteralBraces(text), 'jsx-text', config)) continue;
     // A `=>` arrow leaves a bogus ">" — the char before must close a tag.
     if (stripped[m.index - 1] === '=') continue;
+    // TypeScript generics (`useState<T>(null)`) and comparisons (`n > 0`) also
+    // produce a `>`, and rewriting the code between that and the next `<` is
+    // how extract used to corrupt whole pages. Only a real JSX tag close counts.
+    if (!isJsxTagClose(stripped, m.index)) continue;
     out.push({
       file,
       // The `>` and the words can sit on different lines. Report where the
@@ -213,23 +217,30 @@ function scanJs(file: string, content: string, config: Config): ScannedString[] 
   }
 
   // 3. Object literals that hold copy: { title: 'Pricing', description: '...' }
-  const objRe = /\b([a-zA-Z_]\w*)\s*:\s*(["'`])((?:(?!\2)[^\\]|\\.)*)\2/g;
+  //    The key must sit where an object property would — after `{` or `,` —
+  //    otherwise `console.error("… error:", err)` and `toast.error("…")` look
+  //    like `{ error: "…" }` and extract rewrites the surrounding statements.
+  const objRe = /(?:[{,])\s*([a-zA-Z_]\w*)\s*:\s*(["'`])((?:(?!\2)[^\\]|\\.)*)\2/g;
   while ((m = objRe.exec(stripped))) {
     const key = m[1]!;
     if (!UI_KEYS.has(key)) continue;
     const text = unescape(m[3]!).trim();
     if (!isCopy(text, 'literal', config)) continue;
-    if (isInsideTranslationCall(stripped, m.index)) continue;
+    // Drop the leading `{` / `,` — only the `key: 'value'` span is rewritten.
+    const keyAt = m[0]!.search(/[a-zA-Z_]/);
+    const raw = m[0]!.slice(keyAt);
+    const rawIndex = m.index + keyAt;
+    if (isInsideTranslationCall(stripped, rawIndex)) continue;
     out.push({
       file,
-      line: lineAt(stripped, m.index),
+      line: lineAt(stripped, rawIndex),
       text,
-      raw: m[0]!,
+      raw,
       attr: key,
       kind: kindFromAttr(key.toLowerCase()),
       context: 'literal',
-      component: enclosingComponent(stripped, m.index),
-      scope: functionDepth(stripped, m.index) === 0 ? 'module' : 'nested',
+      component: enclosingComponent(stripped, rawIndex),
+      scope: functionDepth(stripped, rawIndex) === 0 ? 'module' : 'nested',
       placeholders: findPlaceholders(text),
     });
   }
@@ -440,6 +451,53 @@ function isInsideTranslationCall(content: string, index: number): boolean {
 }
 
 /**
+ * Is the `>` at `gtIndex` the end of a JSX tag, rather than a TypeScript
+ * generic or a comparison operator?
+ *
+ * Generics write `useState<T>(null)` and comparisons write `count > 0`; both
+ * leave a `>` that the naive `>(…)<` scanner treats as a text-node boundary.
+ * A real tag has a `<` that is *not* glued to an identifier (`Foo<` is a
+ * generic; ` <div` or `(<div` is JSX).
+ */
+export function isJsxTagClose(content: string, gtIndex: number): boolean {
+  if (content[gtIndex] !== '>') return false;
+  if (gtIndex > 0 && content[gtIndex - 1] === '=') return false;
+
+  const start = Math.max(0, gtIndex - 400);
+  const slice = content.slice(start, gtIndex);
+  let open = -1;
+  let quote: string | null = null;
+  for (let i = slice.length - 1; i >= 0; i--) {
+    const ch = slice[i]!;
+    if (quote) {
+      if (ch === quote && slice[i - 1] !== '\\') quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+      continue;
+    }
+    if (ch === '<') {
+      open = i;
+      break;
+    }
+    // Another `>` means we walked out of this tag / generic nest.
+    if (ch === '>') break;
+  }
+  if (open === -1) return false;
+
+  const absOpen = start + open;
+  const prev = absOpen > 0 ? content[absOpen - 1]! : '\n';
+  // `useState<`, `Foo<`, `Array<`, `Promise<` — generic, not JSX.
+  if (/[A-Za-z0-9_)\]]/.test(prev)) return false;
+
+  const inner = slice.slice(open + 1);
+  // `<div…>`, `</div>`, `<Foo.Bar…>`, `<Namespace:Tag…>`
+  if (!/^\/?[A-Za-z][\w.:-]*/.test(inner)) return false;
+  return true;
+}
+
+/**
  * Is this JSX text node a sentence, or is it code that happened to sit between
  * two angle brackets?
  *
@@ -449,6 +507,15 @@ function isInsideTranslationCall(content: string, index: number): boolean {
  */
 export function isJsxTextCandidate(text: string): boolean {
   if (!text) return false;
+
+  // Code that leaked through a generic or comparison before the tag-close
+  // check existed — keep refusing it even if a future scanner regresses.
+  if (/\)\s*;/.test(text)) return false;
+  if (/^\s*[,([{]/.test(text)) return false;
+  if (/\b(const|let|var|function|return|import|export)\b/.test(text)) return false;
+  if (/\b(useState|useRef|useEffect|useMemo|useCallback|useContext)\b/.test(text)) return false;
+  if (/\b(toast|console)\s*\./.test(text)) return false;
+
   if (!text.includes('{')) return true;
   if (/[()=;`?:]|\.\.\./.test(text.replace(/\{[^{}]*\}/g, ''))) return false;
 

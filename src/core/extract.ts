@@ -218,6 +218,16 @@ export function applyExtraction(
 
     // Work bottom-up so earlier line numbers stay valid.
     for (const edit of [...trustedEdits].sort((a, b) => b.line - a.line)) {
+      // Last line of defence: never rewrite a span that is clearly source code.
+      // The scanner should not emit these; if it does, leaving the file alone
+      // beats turning `useState<T>(null)` into `{t('…')}`.
+      if (looksLikeCodeSpan(edit.before)) {
+        skipped.push({
+          edit,
+          reason: 'replacement target looks like source code, not UI copy — file left untouched for this string',
+        });
+        continue;
+      }
       const idx = edit.line - 1;
       const line = lines[idx];
       // A JSX text node may open on one line and hold its words on the next, so
@@ -473,6 +483,16 @@ function hasStatement(content: string, statement: string): boolean {
   const fn = escapeRe(call[1]!);
   const arg = call[2] === undefined ? `\\s*` : `\\s*['"]${escapeRe(call[2])}['"]\\s*`;
   return new RegExp(`(?:const|let|var)\\s+${binding}\\s*=\\s*${fn}\\s*\\(${arg}\\)`).test(content);
+}
+
+/** Spans the scanner must never ask us to rewrite, even if it misfires. */
+function looksLikeCodeSpan(text: string): boolean {
+  if (/\)\s*;/.test(text)) return true;
+  if (/^\s*[,([{]/.test(text)) return true;
+  if (/\b(const|let|var|function|return|import|export)\b/.test(text)) return true;
+  if (/\b(useState|useRef|useEffect|useMemo|useCallback|useContext)\b/.test(text)) return true;
+  if (/\b(toast|console)\s*\./.test(text)) return true;
+  return false;
 }
 
 /** Index of the `)` that closes the `(` at `open`, or -1. Quote-aware. */
