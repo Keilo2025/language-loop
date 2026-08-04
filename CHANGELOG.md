@@ -11,6 +11,10 @@ All notable changes to Language Loop are documented here.
   (`count > 0`) as tag boundaries, and object-literal copy is only matched after
   `{` or `,` so `console.error("… error:", err)` / `toast.error(…)` cannot be
   rewritten into `{t('errorToast…')}` keys.
+- Stopped `apply` / catalogue writes from wiping sibling keys when memory only
+  holds one feature. Catalogues are always overlaid onto the on-disk files, so a
+  slimmed `memory.json` can no longer reduce `dashboard.json` to just
+  `FinancialScore`.
 
 ## 0.4.4 - 2026-08-02
 

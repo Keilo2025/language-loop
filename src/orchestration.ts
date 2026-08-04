@@ -498,12 +498,17 @@ function writeSelectedCatalogues(
   for (const locale of config.locales) {
     const existing = readCatalog(cwd, config, locale);
     if (!scoped) {
+      // Always overlay onto the on-disk catalogue. Replacing a file with
+      // memory alone drops every key memory happens not to hold — including
+      // when an agent slims memory to one feature before running the loop.
       if (locale === config.sourceLocale) {
+        const next = { ...existing, ...source };
+        for (const key of prunedKeys) delete next[key];
         writeCatalog(
           cwd,
           config,
           locale,
-          prune ? source : { ...existing, ...source },
+          next,
           (relative) => transaction.capture(relative),
         );
         continue;
@@ -516,11 +521,13 @@ function writeSelectedCatalogues(
           return [key, approved ?? value];
         }),
       );
+      const next = { ...existing, ...current };
+      for (const key of prunedKeys) delete next[key];
       writeCatalog(
         cwd,
         config,
         locale,
-        prune ? current : { ...existing, ...current },
+        next,
         (relative) => transaction.capture(relative),
       );
       continue;

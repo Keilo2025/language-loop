@@ -78,16 +78,27 @@ export function applyDecisions(
   const orphans: Record<string, string[]> = {};
   const completeSource = sourceCatalog(memory);
   const existingSource = readCatalog(cwd, config, config.sourceLocale);
-  const source = opts.keys
-    ? mergeSelected(existingSource, completeSource, opts.keys, opts.prune ?? false)
-    : completeSource;
-  const hasSelectedKeys = !opts.keys || opts.keys.size > 0;
 
-  // The source catalogue is regenerated from memory every time — it is a
-  // projection of the code, never something anyone should edit by hand. A
-  // selected Content Loop run updates only its exact keys and namespaces.
-  if (hasSelectedKeys) {
-    const output = catalogueWriteView(config, source, opts.keys);
+  // Scope which keys this apply may touch. Prefer an explicit filter, then the
+  // keys in the decision set, then every key memory knows about. Always overlay
+  // onto the on-disk catalogues — memory is not a complete inventory (agents
+  // regularly slim it to one feature), so replacing a file with memory alone
+  // wiped sibling namespaces like Dashboard next to FinancialScore.
+  const decidedKeys = new Set(
+    Object.values(decisions).filter((decision) => decision.approved).map((decision) => decision.key)
+  );
+  const keysToUpdate = opts.keys
+    ?? (decidedKeys.size > 0 ? decidedKeys : new Set(Object.keys(completeSource)));
+  const namespaceScope = opts.keys ?? (decidedKeys.size > 0 ? decidedKeys : undefined);
+
+  if (keysToUpdate.size > 0) {
+    const source = mergeSelected(
+      existingSource,
+      completeSource,
+      keysToUpdate,
+      opts.prune ?? false,
+    );
+    const output = catalogueWriteView(config, source, namespaceScope);
     if (!opts.dryRun) {
       written.push(...writeCatalog(
         cwd,
@@ -109,15 +120,15 @@ export function applyDecisions(
 
     // Keys the source no longer has. Reported, and only removed on request —
     // a key can vanish because a component was commented out for an afternoon.
+    // "Not in memory" is not the same as "dead": a slimmed memory must never
+    // mark the rest of the catalogue as orphaned.
     const dead = orphanKeys(completeSource, existing)
-      .filter((key) => !opts.keys || opts.keys.has(key));
+      .filter((key) => keysToUpdate.has(key));
     if (dead.length) orphans[locale] = dead;
 
-    const merged = opts.keys
-      ? mergeSelected(existing, fromMemory, opts.keys, opts.prune ?? false)
-      : mergeComplete(completeSource, existing, fromMemory, dead, opts.prune ?? false);
-    if (!hasSelectedKeys) continue;
-    const output = catalogueWriteView(config, merged, opts.keys);
+    if (!keysToUpdate.size) continue;
+    const merged = mergeSelected(existing, fromMemory, keysToUpdate, opts.prune ?? false);
+    const output = catalogueWriteView(config, merged, namespaceScope);
 
     if (!opts.dryRun) {
       written.push(...writeCatalog(cwd, config, locale, output, (rel) => backup.capture(rel)));
@@ -149,24 +160,6 @@ function mergeSelected(
     const value = values[key];
     if (value !== undefined) merged[key] = value;
     else if (prune) delete merged[key];
-  }
-  return merged;
-}
-
-function mergeComplete(
-  source: Record<string, string>,
-  existing: Record<string, string>,
-  fromMemory: Record<string, string>,
-  dead: readonly string[],
-  prune: boolean,
-): Record<string, string> {
-  const merged: Record<string, string> = {};
-  for (const key of Object.keys(source)) {
-    const value = fromMemory[key] ?? existing[key];
-    if (value !== undefined) merged[key] = value;
-  }
-  if (!prune) {
-    for (const key of dead) merged[key] = existing[key]!;
   }
   return merged;
 }

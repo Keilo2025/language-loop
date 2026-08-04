@@ -11,6 +11,7 @@ import { planExtraction, applyExtraction } from '../dist/core/extract.js';
 import { defaultConfig, saveConfig } from '../dist/core/config.js';
 import { loadMemory, saveMemory, deadKeys, pruneMemory } from '../dist/core/memory.js';
 import { catalogueScopeDigest, nest, readCatalog, writeCatalog } from '../dist/core/catalog.js';
+import { applyDecisions } from '../dist/core/apply.js';
 import { readJsonPrecious, writeJson } from '../dist/core/util.js';
 import { commandForStage } from '../dist/core/report.js';
 import {
@@ -1099,6 +1100,62 @@ test('a key the code still calls is not counted as dead', () => {
 
   assert.deepEqual(pruneMemory(memory, dead), ['common.deletedPage']);
   assert.deepEqual(Object.keys(memory.entries), ['common.shipAfternoon']);
+});
+
+// --- apply must not wipe catalogues when memory is slimmed ------------------
+
+test('apply with a slimmed memory overlays keys and keeps sibling catalogue copy', () => {
+  const dir = project({});
+  const cfg = config({
+    layout: 'namespaced',
+    locales: ['en', 'de'],
+  });
+  saveConfig(dir, cfg);
+
+  writeCatalog(dir, cfg, 'en', {
+    'dashboard.Dashboard.title': 'Dashboard',
+    'dashboard.FinancialScore.title': 'Financial Score',
+    'dashboard.newsFeed.title': 'News',
+  });
+  writeCatalog(dir, cfg, 'de', {
+    'dashboard.Dashboard.title': 'Übersicht',
+    'dashboard.FinancialScore.title': 'Finanzscore',
+    'dashboard.newsFeed.title': 'Nachrichten',
+  });
+
+  // Agent-style slim memory: only the feature being translated.
+  const memory = emptyMemory();
+  memory.entries['dashboard.FinancialScore.title'] = {
+    source: 'Financial Score',
+    sourceHash: sha('Financial Score'),
+    namespace: 'dashboard',
+    kind: 'heading',
+    file: 'app/score/page.tsx',
+    placeholders: [],
+    firstSeen: '',
+    lastSeen: '',
+    translations: {},
+  };
+  saveMemory(dir, memory);
+
+  applyDecisions(dir, memory, cfg, {
+    'dashboard.FinancialScore.title:de': {
+      key: 'dashboard.FinancialScore.title',
+      locale: 'de',
+      approved: true,
+      value: 'Finanzgesundheit',
+      editedByHuman: false,
+    },
+  });
+
+  const en = readCatalog(dir, cfg, 'en');
+  const de = readCatalog(dir, cfg, 'de');
+  assert.equal(en['dashboard.Dashboard.title'], 'Dashboard');
+  assert.equal(en['dashboard.newsFeed.title'], 'News');
+  assert.equal(en['dashboard.FinancialScore.title'], 'Financial Score');
+  assert.equal(de['dashboard.Dashboard.title'], 'Übersicht');
+  assert.equal(de['dashboard.newsFeed.title'], 'Nachrichten');
+  assert.equal(de['dashboard.FinancialScore.title'], 'Finanzgesundheit');
 });
 
 // --- bug 10: nested key collision -------------------------------------------
