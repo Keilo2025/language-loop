@@ -760,6 +760,8 @@ test('installing the Cursor command records Cursor for future stage handoffs', (
   assert.match(installedCommand, /Approve correct translations on the user's behalf/i);
   assert.doesNotMatch(installedCommand, /i18n-review|waits? for (the )?user/i);
   assert.match(installedRule, /AI judge is the decision-maker/i);
+  assert.match(installedRule, /language swarm agent specialist/i);
+  assert.match(installedRule, /3 sub-agents which are\s+specialists on the specific language/i);
   assert.doesNotMatch(installedRule, /language-loop review|i18n-review|waits? for (the )?user/i);
   assert.match(
     installedRule,
@@ -821,6 +823,20 @@ test('packaged localization agent applies the same completion gate as the loop c
     instructions,
     /finish every other pending locale before reporting (?:a|the) blocker/i,
   );
+  assert.match(instructions, /language swarm/i);
+  assert.match(instructions, /one named specialist per target language/i);
+});
+
+test('packaged language specialist is one agent per target language', () => {
+  const instructions = fs.readFileSync(
+    path.join(process.cwd(), 'agents', 'language-specialist.md'),
+    'utf8',
+  );
+
+  assert.match(instructions, /one language/i);
+  assert.match(instructions, /3 sub-agents/i);
+  assert.match(instructions, /de-DE-specialist/);
+  assert.match(instructions, /do not translate any other locale/i);
 });
 
 test('help says exact catalogue keys wait for marketing', () => {

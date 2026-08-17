@@ -41,7 +41,8 @@ opinion on a translation that is already broken. The AI judge is the approval au
 it approves correct translations on behalf of the vibe coder and returns incorrect ones
 with a concrete correction until they pass. `run --llm` continues through every batch without
 another user invocation, finishing one language before moving to the next. The staged commands
-remain available when you want the vibe-coding agent you already use to be the translator.
+remain available when you want the vibe-coding agent you already use to run a language swarm:
+one specialist sub-agent per target language.
 
 This exists because of a specific problem: **you probably cannot read the languages you are
 shipping.** A review screen asking you to approve two hundred Russian strings is not
@@ -207,16 +208,21 @@ Keys are stable and readable — `hero.getStartedFree`, not `hero.key_47`. Where
 want the same name, the suffix is a hash of the source rather than a counter, so a different
 scan order can never renumber anyone's keys and orphan their translations.
 
-### 3. Your agent does the language work
+### 3. A specialist per language does the language work
 
-`translate` writes `.language-loop/brief.md` and stops. The brief carries the product's
-framework and runtime, the voice and formality rules, the glossary, the do-not-translate list,
-the plural categories for each target language, the file each string came from — and only the
-items that are new or stale.
+`translate` writes `.language-loop/brief.md` and `.language-loop/swarm.json` and stops. The
+brief carries the product's framework and runtime, the voice and formality rules, the
+glossary, the do-not-translate list, the plural categories for each target language, the
+file each string came from — and only the items that are new or stale.
+
+**Always create a language swarm agent specialist in the language they have to translate.**
+If you translate English to German, Russian and French, you have 3 sub-agents which are
+specialists on the specific language. The lead reads the roster and spawns them; the
+specialist whose locale is in this brief writes `.language-loop/translations.json`.
 
 **This is what makes it work inside a coding agent with no API key.** The CLI is the harness;
-your agent is the model. It reads the brief, opens the component behind each string, and
-writes `.language-loop/translations.json`.
+the language specialists are the model. Each one reads the brief, opens the component
+behind each string, and writes only their language.
 
 That arrangement is not a workaround for the lack of a key. It produces better translations
 than a translation API does, because the translator can see the button:
@@ -388,8 +394,10 @@ You get:
 - **`/i18n-audit`** — a report on what is hardcoded and what has gone stale
 - **`language-loop` skill** — triggers automatically whenever you ask about translation, i18n
   or shipping to a new market
-- **`localization-engineer` subagent** — a localization engineer who opens the file before
-  translating the string
+- **`localization-engineer` subagent** — the swarm lead: reads the brief and spawns one
+  language specialist per target language
+- **`language-specialist` subagent** — a native-level translator for one locale; spawn one
+  per language (German, Russian, French → 3 specialists)
 
 ---
 
@@ -618,6 +626,8 @@ duplicate records all fail closed before catalogues are changed.
 | file | purpose |
 | --- | --- |
 | `.language-loop/memory.json` | durable translation state; commit this file |
+| `.language-loop/backups/` | undo snapshots; `init` adds `**/.language-loop/backups/` to `.gitignore` |
+| `.language-loop/backlog/` | generated work queue; `init` adds `**/.language-loop/backlog/` to `.gitignore` |
 | `.language-loop/batch.json` | current immutable batch manifest |
 | `.language-loop/brief.md` | staged translator instructions |
 | `.language-loop/translations.json` | candidates bound to the current batch |

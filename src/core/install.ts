@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { swarmLeadRule } from './swarm.js';
 import { exists } from './util.js';
 
 /**
@@ -170,11 +171,17 @@ reason attached, and goes round again until the AI judge approves it. Re-running
 adding a page translates that page only — memory tracks what is already done, so the loop
 is cheap the second time.
 
+### Language swarm
+
+${swarmLeadRule()}
+
 ### Your part
 
-\`translate\` writes \`.language-loop/brief.md\` and stops. **You are the translator.**
-Read the brief in full, then write \`.language-loop/translations.json\` in the schema it
-gives you. There is no API key involved; the CLI is the harness and you are the model.
+\`translate\` writes \`.language-loop/brief.md\` and \`.language-loop/swarm.json\` and stops. **The lead does not translate.**
+Read the brief and \`.language-loop/swarm.json\`, spawn one specialist per target language,
+and have the matching specialist write \`.language-loop/translations.json\` in the schema
+the brief gives you. There is no API key involved; the CLI is the harness and the
+specialists are the model.
 
 Two things make your translations better than a machine translation service, and both
 require effort:
@@ -199,8 +206,9 @@ require effort:
   correct translations on the user's behalf, and sends incorrect ones around again.
 - Do not stop after a rejection. Continue \`translate\` → \`judge\` → \`apply\` until the
   judge approves every guardrail-clean translation in the batch.
-- Continue immediately across every batch and locale. Finish one language before moving
-  to the next, and do not hand control back to the user while translation work remains.
+- Continue immediately across every batch and locale. Each language is owned by its
+  specialist; do not hand a German brief to a French specialist or to the lead. Do not
+  hand control back to the user while translation work remains.
 - A stage argument chooses where the run starts, not where it stops. After every
   \`apply\`, treat its displayed next command as your next internal action. Run
   \`status\` and \`audit\` at the end; claim success only when \`audit\` reports complete.
@@ -237,30 +245,32 @@ passes its translator and judge to \`language-loop/orchestration\` directly.
    \`npx marketing-loop review --ui\`, then \`npx marketing-loop apply\`. marketing-loop edits only
    the source catalogue; language-loop owns extraction and every target catalogue. Exact
    unresolved catalogue keys pause translation; identical text under different keys does not.
-4. \`npx language-loop translate\` — this writes \`.language-loop/brief.md\` and stops.
-   The brief may contain **rework** items: strings the judge rejected on an earlier pass,
-   each carrying the reason. Fix the stated problem rather than rephrasing around it.
-5. **Read the brief in full.** You are the translator. For each item, open the file it
-   names before you write anything — the surrounding component tells you whether a word
+4. \`npx language-loop translate\` — this writes \`.language-loop/brief.md\` and
+   \`.language-loop/swarm.json\` and stops. The brief may contain **rework** items:
+   strings the judge rejected on an earlier pass, each carrying the reason. Fix the
+   stated problem rather than rephrasing around it.
+5. **Spawn the language swarm.** ${swarmLeadRule().replace(/\n/g, '\n   ')}
+6. **The matching specialist reads the brief in full.** For each item, open the file it
+   names before writing anything — the surrounding component tells you whether a word
    is a verb or a noun, and how much room the string has. Preserve every placeholder
    exactly. Use ICU plurals where the language needs them. Write natural modern product
    language for the selected audience locale, never literal textbook prose.
-6. Write \`.language-loop/translations.json\` in the schema at the bottom of the brief. Use
-   the optional \`note\` field whenever you made a judgement call.
-7. \`npx language-loop judge\` — writes \`.language-loop/judge.md\`. Read your own translations
-   back against the source and the component, and write \`.language-loop/verdicts.json\`.
-   The AI judge owns this decision because the user probably cannot read these languages.
-   Approve correct translations on the user's behalf; reject only incorrect ones and give
-   a concrete correction for the next autonomous pass.
-8. \`npx language-loop apply\` — automated guardrails hold questionable or mechanically
+7. The specialist writes \`.language-loop/translations.json\` in the schema at the bottom
+   of the brief. Use the optional \`note\` field whenever they made a judgement call.
+8. \`npx language-loop judge\` — writes \`.language-loop/judge.md\`. The same-language
+   specialist reads their translations back against the source and the component, and
+   writes \`.language-loop/verdicts.json\`. The AI judge owns this decision because the
+   user probably cannot read these languages. Approve correct translations on the user's behalf;
+   reject only incorrect ones and give a concrete correction for the next autonomous pass.
+9. \`npx language-loop apply\` — automated guardrails hold questionable or mechanically
    invalid translations back and write the safe translations to the catalogues. Anything
    the judge rejected is sent back rather than written.
-9. **If \`apply\` reports translations sent back, go to step 4 and do another pass.** That is
+10. **If \`apply\` reports translations sent back, go to step 4 and do another pass.** That is
    the loop closing. Repeat until nothing comes back. Never hand a rejected translation to
    the user for approval; inspect the source component, correct it, and judge it again.
-10. **Continue immediately across every selected batch and locale.** Finish all selected
-   strings for one language before moving to the next. Do not stop, summarize, or ask the
-   user to invoke \`/language-loop\` again while selected translation work remains.
+11. **Continue immediately across every selected batch and locale.** The matching specialist
+   owns every batch of their language. Do not stop, summarize, or ask the user to invoke
+   \`/language-loop\` again while selected translation work remains.
 
 ## Completion gate
 

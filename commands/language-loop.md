@@ -22,30 +22,37 @@ passes its translator and judge to `language-loop/orchestration` directly.
    `npx marketing-loop review --ui`, then `npx marketing-loop apply`. marketing-loop edits only
    the source catalogue; language-loop owns extraction and every target catalogue. Exact
    unresolved catalogue keys pause translation; identical text under different keys does not.
-4. `npx language-loop translate` — this writes `.language-loop/brief.md` and stops.
-   The brief may contain **rework** items: strings the judge rejected on an earlier pass,
-   each carrying the reason. Fix the stated problem rather than rephrasing around it.
-5. **Read the brief in full.** You are the translator. For each item, open the file it
-   names before you write anything — the surrounding component tells you whether a word
+4. `npx language-loop translate` — this writes `.language-loop/brief.md` and
+   `.language-loop/swarm.json` and stops. The brief may contain **rework** items:
+   strings the judge rejected on an earlier pass, each carrying the reason. Fix the
+   stated problem rather than rephrasing around it.
+5. **Spawn the language swarm.** Always create a language swarm agent specialist in the
+   language they have to translate. If you translate English to German, Russian and French,
+   you have 3 sub-agents which are specialists on the specific language — one German
+   specialist, one Russian specialist, and one French specialist. Spawn one named
+   specialist per target language in a single message before anyone writes a translation.
+   Name them `<locale>-specialist` (e.g. `de-DE-specialist`). The lead does not translate.
+6. **The matching specialist reads the brief in full.** For each item, open the file it
+   names before writing anything — the surrounding component tells you whether a word
    is a verb or a noun, and how much room the string has. Preserve every placeholder
    exactly. Use ICU plurals where the language needs them. Write natural modern product
    language for the selected audience locale, never literal textbook prose.
-6. Write `.language-loop/translations.json` in the schema at the bottom of the brief. Use
-   the optional `note` field whenever you made a judgement call.
-7. `npx language-loop judge` — writes `.language-loop/judge.md`. Read your own translations
-   back against the source and the component, and write `.language-loop/verdicts.json`.
-   The AI judge owns this decision because the user probably cannot read these languages.
-   Approve correct translations on the user's behalf; reject only incorrect ones and give
-   a concrete correction for the next autonomous pass.
-8. `npx language-loop apply` — automated guardrails hold questionable or mechanically
+7. The specialist writes `.language-loop/translations.json` in the schema at the bottom
+   of the brief. Use the optional `note` field whenever they made a judgement call.
+8. `npx language-loop judge` — writes `.language-loop/judge.md`. The same-language
+   specialist reads their translations back against the source and the component, and
+   writes `.language-loop/verdicts.json`. The AI judge owns this decision because the
+   user probably cannot read these languages. Approve correct translations on the user's behalf;
+   reject only incorrect ones and give a concrete correction for the next autonomous pass.
+9. `npx language-loop apply` — automated guardrails hold questionable or mechanically
    invalid translations back and write the safe translations to the catalogues. Anything
    the judge rejected is sent back rather than written.
-9. **If `apply` reports translations sent back, go to step 4 and do another pass.** That is
+10. **If `apply` reports translations sent back, go to step 4 and do another pass.** That is
    the loop closing. Repeat until nothing comes back. Never hand a rejected translation to
    the user for approval; inspect the source component, correct it, and judge it again.
-10. **Continue immediately across every selected batch and locale.** Finish all selected
-   strings for one language before moving to the next. Do not stop, summarize, or ask the
-   user to invoke `/language-loop` again while selected translation work remains.
+11. **Continue immediately across every selected batch and locale.** The matching specialist
+   owns every batch of their language. Do not stop, summarize, or ask the user to invoke
+   `/language-loop` again while selected translation work remains.
 
 ## Completion gate
 

@@ -60,8 +60,10 @@ passes its translator and judge directly to the module. An optional Marketing ha
 `apply` reports how many translations the judge sent back. **If that number is not zero, go
 round again from `translate`** — the brief will contain those strings with the reason each
 one failed. Repeat until nothing comes back. Continue across every batch and locale without
-handing the loop back to the user. Finish one language before starting the next. The user is
-never the fallback approver.
+handing the loop back to the user. Always create a language swarm agent specialist in the
+language they have to translate. If you translate English to German, Russian and French, you
+have 3 sub-agents which are specialists on the specific language. The user is never the
+fallback approver.
 
 The stage named in the user's invocation is the starting point, not a stopping point.
 After every `apply`, treat a displayed `next` command as your next internal action and
@@ -83,12 +85,23 @@ init --source en-US --locales fr-CA,de-DE,ja-JP --agents cursor
 
 ## Your job is step three
 
-`translate` does not translate. It works out exactly what is outstanding, writes the brief,
-and stops. **You are the translator.** There is no API key involved; the CLI is the harness
-and you are the model.
+`translate` does not translate. It works out exactly what is outstanding, writes the brief
+and `.language-loop/swarm.json`, and stops. **The lead does not translate.** There is no API
+key involved; the CLI is the harness and the language specialists are the model.
+
+Always create a language swarm agent specialist in the language they have to translate.
+If you translate English to German, Russian and French, you have 3 sub-agents which are
+specialists on the specific language:
+
+1. Read the brief and the swarm roster.
+2. Spawn **one named specialist per target language** in a single message
+   (`de-DE-specialist`, `ru-RU-specialist`, `fr-FR-specialist`).
+3. The specialist whose locale is in this brief writes `.language-loop/translations.json`.
+   The others stay assigned to their locales for later batches.
+4. The same-language specialist judges their own work.
 
 That arrangement is the whole reason this produces better output than a translation API, but
-only if you use the advantage you have, which is that you can read the code:
+only if each specialist uses the advantage they have, which is that they can read the code:
 
 1. **Open the file each string came from.** The brief names it. `Close` is a verb on a button
    and an adjective in a sentence. `Free` is a price and a state. The surrounding component
@@ -113,7 +126,8 @@ only if you use the advantage you have, which is that you can read the code:
    bureaucratic or needlessly formal prose, and use the selected audience locale's vocabulary
    and spelling.
 
-Write `.language-loop/translations.json` exactly as the brief specifies, then run `judge`.
+The matching specialist writes `.language-loop/translations.json` exactly as the brief
+specifies, then the lead runs `judge`.
 
 ## Judging your own work
 
@@ -138,6 +152,8 @@ review canvas or ask the user to approve translations.
 
 ## What you must not do
 
+- **Do not translate as a generalist.** Spawn one specialist per target language. English to
+  German, Russian and French is three sub-agents, not one agent writing three catalogues.
 - **Do not edit catalogue files to add translations.** `apply` validates and writes those. If
   you edit one anyway the loop will notice, mark it `manual` and lock it against every future
   run — which is right for a human's edit and wrong for yours.

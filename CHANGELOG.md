@@ -4,6 +4,13 @@ All notable changes to Language Loop are documented here.
 
 ## Unreleased
 
+### Changed
+
+- Translation is now a language swarm: the lead always spawns one specialist sub-agent
+  per target language. English → German, Russian and French means three specialists.
+  `translate` writes `.language-loop/swarm.json` with the roster; the matching specialist
+  owns the current one-language brief.
+
 ### Fixed
 
 - Stopped `extract` from corrupting React/TypeScript source. The JSX text scanner

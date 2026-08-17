@@ -230,10 +230,16 @@ test('apply continues to the next batch instead of handing the loop back to the 
 test('each translation batch contains only one language', () => {
   const dir = batchedProject(200);
   const brief = fs.readFileSync(statePath(dir, 'brief.md'), 'utf8');
+  const swarm = JSON.parse(fs.readFileSync(statePath(dir, 'swarm.json'), 'utf8'));
 
   assert.match(brief, /## To translate — 2 item\(s\)/);
   assert.match(brief, /^### de-DE/m);
   assert.doesNotMatch(brief, /^### fr-FR/m);
+  assert.equal(swarm.activeLocale, 'de-DE');
+  assert.deepEqual(swarm.specialists.map((item) => item.agentId), [
+    'de-DE-specialist',
+    'fr-FR-specialist',
+  ]);
 });
 
 test('the loop finishes one language before starting the next', () => {

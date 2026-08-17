@@ -10,6 +10,7 @@ import type {
 import { statePath } from './config.js';
 import { DIALECT_RULE, localeInfo } from './locales.js';
 import { commandForStage } from './report.js';
+import { swarmBriefSection, swarmRoster } from './swarm.js';
 import { truncate } from './util.js';
 
 /**
@@ -32,12 +33,16 @@ export interface BriefInput {
   marketing: MarketingLoopInstallation;
   openItems: { file: string; line: number; text: string; reason: string }[];
   frozen: WorkItem[];
+  /** Every locale that still has work — one specialist is spawned for each. */
+  swarmLocales?: string[];
 }
 
 export function writeBrief(cwd: string, input: BriefInput): { file: string; units: number } {
   const { config, work, batch: manifest, marketing, openItems, frozen } = input;
   const batch = work.slice(0, config.maxBatch);
   const manifestById = new Map(manifest.units.map((unit) => [`${unit.key}::${unit.locale}`, unit]));
+  const activeLocale = batch[0]?.locale ?? '';
+  const roster = swarmRoster(input.swarmLocales?.length ? input.swarmLocales : batch.map((item) => item.locale));
   const lines: string[] = [];
 
   lines.push('# Translation brief');
@@ -45,10 +50,12 @@ export function writeBrief(cwd: string, input: BriefInput): { file: string; unit
   lines.push(`Generated ${new Date().toISOString()} by language-loop.`);
   lines.push(`Batch: \`${manifest.id}\``);
   lines.push('');
-  lines.push('You are the translator. Read this whole file, then write `.language-loop/translations.json`');
-  lines.push('in the schema at the bottom. Do not edit the catalogues directly — the loop writes those');
-  lines.push('after automated guardrails accept what you produce.');
+  lines.push('The lead reads this file and spawns language specialists. The specialist for this');
+  lines.push('batch writes `.language-loop/translations.json` in the schema at the bottom. Do not');
+  lines.push('edit the catalogues directly — the loop writes those after automated guardrails');
+  lines.push('accept what you produce.');
   lines.push('');
+  lines.push(swarmBriefSection(roster, activeLocale));
 
   lines.push('## What this project is');
   lines.push('');

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { statePath } from './config.js';
+import { ensureGitignore } from './gitignore.js';
 import { exists, readJson, writeJson } from './util.js';
 
 interface Manifest {
@@ -39,6 +40,7 @@ export class Backup {
 
   commit(): string | null {
     if (!this.manifest.files.length) return null;
+    ensureGitignore(this.cwd);
     writeJson(path.join(this.dir, 'manifest.json'), this.manifest);
     writeJson(statePath(this.cwd, 'last-backup.json'), { id: this.manifest.id, dir: path.relative(this.cwd, this.dir) });
     return this.manifest.id;

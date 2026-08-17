@@ -12,6 +12,7 @@ import {
   recordVerdicts, saveMemory, sourceCatalog, stats,
 } from './core/memory.js';
 import { writeBrief } from './core/brief.js';
+import { swarmRoster, writeSwarmState } from './core/swarm.js';
 import { writeJudgeBrief } from './core/judge.js';
 import { checkTranslations, partition } from './core/guardrails.js';
 import { applyDecisions, type Decision } from './core/apply.js';
@@ -35,6 +36,7 @@ import { c, commandForStage, heading, nextStep, reportScan, reportStats } from '
 import { renderCompletenessReport } from './core/report.js';
 import { analyzeCompleteness } from './core/completeness.js';
 import { exists, readJson, truncate, writeJson } from './core/util.js';
+import { ensureGitignore } from './core/gitignore.js';
 import { readCatalog, missingKeys, orphanKeys, writeCatalog } from './core/catalog.js';
 import { estimateBatch, translateWithLlm } from './core/llm.js';
 import { contextMap } from './core/context.js';
@@ -593,6 +595,7 @@ function finishInit(config: Config, runtimeInstalled: boolean): void {
   const memory = loadMemory(cwd, config.sourceLocale);
   memory.sourceLocale = config.sourceLocale;
   saveMemory(cwd, memory);
+  const ignored = ensureGitignore(cwd);
 
   if (config.agents.length) {
     const { written, commands } = installAgents(cwd, config.agents);
@@ -604,6 +607,9 @@ function finishInit(config: Config, runtimeInstalled: boolean): void {
   heading('written');
   console.log(`  ${c.green('+')} ${CONFIG_FILE}`);
   console.log(`  ${c.green('+')} .language-loop/memory.json  ${c.dim('— commit this; it is what makes re-runs cheap')}`);
+  if (ignored.length) {
+    console.log(`  ${c.green('+')} .gitignore  ${c.dim(ignored.join('  '))}`);
+  }
 
   nextStep([
     commandForStage(config, 'scan') + '       ' + c.dim('# see what is hardcoded'),
@@ -784,6 +790,7 @@ async function cmdTranslate(): Promise<void> {
   const cleared = clearBatchArtifacts(cwd);
   writeBatch(cwd, manifest);
 
+  const swarmLocales = [...new Set(usable.map((item) => item.locale))];
   const brief = writeBrief(cwd, {
     config,
     memory,
@@ -792,6 +799,13 @@ async function cmdTranslate(): Promise<void> {
     marketing,
     openItems,
     frozen,
+    swarmLocales,
+  });
+  const swarm = writeSwarmState(cwd, {
+    version: 1,
+    sourceLocale: config.sourceLocale,
+    activeLocale,
+    specialists: swarmRoster(swarmLocales),
   });
   saveMemory(cwd, memory);
 
@@ -805,6 +819,14 @@ async function cmdTranslate(): Promise<void> {
   console.log('');
   console.log(`  ${c.green('+')} ${brief.file}  ${c.dim(`(${brief.units} item(s))`)}`);
   console.log(`  ${c.green('+')} .language-loop/batch.json  ${c.dim(`(${manifest.id})`)}`);
+  const swarmHint = swarmLocales.length === 1
+    ? '1 specialist'
+    : `${swarmLocales.length} specialists — spawn one per language`;
+  console.log(`  ${c.green('+')} ${swarm}  ${c.dim(`(${swarmHint})`)}`);
+  for (const specialist of swarmRoster(swarmLocales)) {
+    const mark = specialist.locale === activeLocale ? 'this batch' : 'pending';
+    console.log(`      ${specialist.agentId}  ${c.dim(`${specialist.language} · ${mark}`)}`);
+  }
   if (cleared.length) console.log(c.dim(`  cleared stale ${cleared.join(', ')}`));
   if (heldBack) {
     console.log(
@@ -834,8 +856,8 @@ async function cmdTranslate(): Promise<void> {
   }
 
   nextStep([
-    c.bold('Read .language-loop/brief.md and write .language-loop/translations.json.'),
-    c.dim('You are the translator — open the files the brief names before you write.'),
+    c.bold('Spawn one specialist sub-agent per target language, then write .language-loop/translations.json.'),
+    c.dim('English → German, Russian and French means 3 specialists. The lead does not translate.'),
     '',
     `then: ${commandForStage(config, 'judge')}`,
   ]);

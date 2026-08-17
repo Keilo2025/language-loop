@@ -3,7 +3,8 @@ dist/
 *.log
 *.tgz
 .DS_Store
-.language-loop/backups/
+**/.language-loop/backups/
+**/.language-loop/backlog/
 .language-loop/brief.md
 .language-loop/batch.json
 .language-loop/translations.json

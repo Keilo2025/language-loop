@@ -30,6 +30,10 @@ export {
   catalogFileForKey, sourceCatalogueFiles, catalogueScopeIdentity, catalogueScopeDigest,
 } from './core/catalog.js';
 export { writeBrief } from './core/brief.js';
+export {
+  SWARM_FILE, specialistAgentId, swarmRoster, writeSwarmState, swarmLeadRule, swarmBriefSection,
+} from './core/swarm.js';
+export type { SwarmSpecialist, SwarmState } from './core/swarm.js';
 export { checkTranslations, partition } from './core/guardrails.js';
 export { applyDecisions } from './core/apply.js';
 export {
@@ -40,6 +44,7 @@ export type { MarketingLoopState } from './core/marketing.js';
 export { installAgents, uninstallAgents, detectAgents, AGENTS } from './core/install.js';
 export { wireRuntime } from './core/wire.js';
 export { revertLast, Backup } from './core/backup.js';
+export { ensureGitignore, GITIGNORE_ENTRIES } from './core/gitignore.js';
 export {
   LOCALES, POPULAR, COMMON_LOCALES, REGIONS, localeInfo, isRtl,
   canonicalLocaleCode, allCommonLocaleCodes, localesForRegions,
