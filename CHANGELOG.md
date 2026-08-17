@@ -4,6 +4,8 @@ All notable changes to Language Loop are documented here.
 
 ## Unreleased
 
+## 0.5.0 - 2026-08-17
+
 ### Changed
 
 - Translation is now a language swarm: the lead always spawns one specialist sub-agent
