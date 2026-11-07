@@ -58,7 +58,7 @@
     "version": "node scripts/sync-plugin-version.mjs && git add .claude-plugin/plugin.json"
   },
   "engines": {
-    "node": ">=18.17"
+    "node": "^22.23.4 || ^24.22.2 || ^26.13.0"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
